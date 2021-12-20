@@ -2280,3 +2280,12 @@ TEST(StaticRuntime, ModelCrashOnSecondRun) {
   // Run again to verify this.
   compareResultsWithJIT(runtime, graph, args_no_crash);
 }
+
+TEST(StaticRuntime, ReturnConstant) {
+  const auto src = R"JIT(
+    def forward(self):
+        return 1
+  )JIT";
+
+  testStaticRuntime(src, {});
+}
