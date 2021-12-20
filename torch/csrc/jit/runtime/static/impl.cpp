@@ -134,6 +134,7 @@ void OptimizeGraph(
   EliminateNoOps(
       graph, /* custom_ops */ {fromQualString("fb::scale_gradient")});
   CreateOwnedRefsForReturnedConstants(*graph);
+  ForceNonEmptyOutputs(*graph);
   GRAPH_DUMP("Final graph after optimizations: ", graph);
 }
 
