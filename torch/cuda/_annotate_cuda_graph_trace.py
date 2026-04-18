@@ -358,5 +358,124 @@ def main() -> None:
     print(f"Saved annotated trace to {output}")
 
 
+def _build_layer_ranges(
+    kernel_rows: list,
+    annotations: dict[int, dict],
+    node_id_col: int,
+    start_col: int,
+    end_col: int,
+    tid_col: int,
+) -> list[tuple[int, int, str, int]]:
+    """
+    Group annotated kernels by layer name and return
+    (range_start, range_end, label, globalTid) tuples — one per unique layer.
+
+    The label is the longest common prefix of all FQN values in the annotation,
+    e.g. {"encoder.weight": ..., "encoder.bias": ...} → "encoder".
+    Falls back to "graph_{graph_id}" when no FQN values are present.
+    """
+    def _common_prefix(fqn_values: list[str]) -> str:
+        if not fqn_values:
+            return ""
+        parts = [v.split(".") for v in fqn_values]
+        prefix: list[str] = []
+        for components in zip(*parts):
+            if len(set(components)) == 1:
+                prefix.append(components[0])
+            else:
+                break
+        return ".".join(prefix) if prefix else fqn_values[0]
+
+    label_to_bounds: dict[str, tuple[int, int, int]] = {}  # label → (min_start, max_end, tid)
+
+    for row in kernel_rows:
+        node_id = row[node_id_col]
+        ann = annotations.get(node_id)
+        if ann is None:
+            continue
+        fqn_map: dict[str, str] = ann.get("fqn_map", {})
+        graph_id: int = ann.get("graph_id", 0)
+        label = _common_prefix(list(fqn_map.values())) or f"graph_{graph_id}"
+        k_start = row[start_col]
+        k_end = row[end_col]
+        tid = row[tid_col]
+        if label in label_to_bounds:
+            prev_start, prev_end, prev_tid = label_to_bounds[label]
+            label_to_bounds[label] = (min(prev_start, k_start), max(prev_end, k_end), prev_tid)
+        else:
+            label_to_bounds[label] = (k_start, k_end, tid)
+
+    return [
+        (start, end, label, tid)
+        for label, (start, end, tid) in label_to_bounds.items()
+    ]
+
+
+def inject_nvtx_ranges_into_nsys_sqlite(
+    sqlite_path: str,
+    annotations_pkl_path: str,
+    output_sqlite_path: str,
+) -> None:
+    """
+    Write a copy of an nsys SQLite file with synthetic NVTX range rows added for
+    each annotated CUDA graph layer.
+
+    The original file is never modified. The output is a full copy with rows
+    inserted into ``NVTX_EVENTS`` spanning the GPU timestamp windows of kernels
+    belonging to each annotated nn.Module layer. These rows appear as colored
+    push/pop range annotations in the Nsight Systems timeline UI, reconstructing
+    the layer-name visual hierarchy for CUDA graph replays.
+
+    Args:
+        sqlite_path: Path to the nsys-exported SQLite file
+                     (produced with ``nsys export --type sqlite``).
+        annotations_pkl_path: Path to the kernel annotations pickle
+                     (produced by torch.cuda._graph_annotations).
+        output_sqlite_path: Path for the annotated output SQLite.
+                     Must differ from ``sqlite_path``.
+
+    Requires ``CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL`` and ``NVTX_EVENTS``
+    tables in the SQLite (both present by default in nsys exports).
+    eventType 60 = NvtxPushPop complete range (start + end populated).
+    """
+    import shutil
+    import sqlite3
+
+    if output_sqlite_path == sqlite_path:
+        raise ValueError("output_sqlite_path must differ from sqlite_path")
+
+    shutil.copy2(sqlite_path, output_sqlite_path)
+
+    with open(annotations_pkl_path, "rb") as f:
+        annotations: dict[int, dict] = pickle.load(f)
+
+    conn = sqlite3.connect(output_sqlite_path)
+    cur = conn.execute("SELECT * FROM CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL")
+    col_names = [d[0] for d in cur.description]
+    kernel_rows = cur.fetchall()
+
+    if not kernel_rows:
+        conn.close()
+        return
+
+    node_id_col = col_names.index("graphNodeId")
+    start_col = col_names.index("start")
+    end_col = col_names.index("end")
+    tid_col = col_names.index("globalTid") if "globalTid" in col_names else start_col
+
+    ranges = _build_layer_ranges(
+        kernel_rows, annotations, node_id_col, start_col, end_col, tid_col
+    )
+
+    # eventType=60 is NvtxPushPop with start+end (a complete range)
+    conn.executemany(
+        "INSERT INTO NVTX_EVENTS (start, end, eventType, globalTid, domainId, text) "
+        "VALUES (?, ?, 60, ?, 0, ?)",
+        [(start, end, tid, label) for start, end, label, tid in ranges],
+    )
+    conn.commit()
+    conn.close()
+
+
 if __name__ == "__main__":
     main()
