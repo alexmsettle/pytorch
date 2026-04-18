@@ -156,6 +156,7 @@ class WrappedFunction:
     constants: tuple[torch.Tensor, ...]
     placeholders: Sequence[PlaceholderInfo]
     mutated_input_idxs: Sequence[int]
+    fqn_map: dict[str, str] = dataclasses.field(default_factory=dict)
 
 
 def get_mutating_use_stack_trace_from_node(
@@ -446,6 +447,7 @@ class CudagraphCachedInfo:
     placeholders: Sequence[PlaceholderInfo]
     stack_traces: list[str | None]
     cudagraph_fail_reasons: list[str]
+    fqn_map: dict[str, str] = dataclasses.field(default_factory=dict)
 
 
 @dataclasses.dataclass(frozen=True)
