@@ -1751,6 +1751,13 @@ class triton:
     # Synchronize after every kernel launch, to help pinpoint bugs
     debug_sync_kernel = False
 
+    # Annotate CUDA graph kernels with nn.Module FQN (fully qualified name)
+    # layer names captured at compile time. Requires cuda-python and CUDA >= 13.1.
+    # Annotations are stored in a pickle file alongside profiler traces and can be
+    # merged into Chrome traces via torch.cuda._annotate_cuda_graph_trace or
+    # into nsys SQLite output via torch.cuda._annotate_cuda_graph_trace.inject_nvtx_ranges_into_nsys_sqlite.
+    cudagraph_kernel_annotations: bool = False
+
     # Always load full blocks (rather than broadcasting inside the block)
     dense_indexing = False
 
