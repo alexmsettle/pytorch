@@ -39,11 +39,28 @@ class TestCudagraphFqnAnnotations(TestCase):
     def test_wrapped_function_fqn_defaults_empty(self):
         import dataclasses
         from torch._inductor.cudagraph_utils import WrappedFunction
-        # fqn_map field has default_factory=dict so default value is {}
         fqn_field = next(
             f for f in dataclasses.fields(WrappedFunction) if f.name == "fqn_map"
         )
         self.assertIsNotNone(fqn_field.default_factory)
+
+    def test_cudagraphify_accepts_fqn_map(self):
+        import inspect
+        from torch._inductor.compile_fx import cudagraphify
+        sig = inspect.signature(cudagraphify)
+        self.assertIn("fqn_map", sig.parameters)
+
+    def test_cudagraphify_trees_accepts_fqn_map(self):
+        import inspect
+        from torch._inductor.cudagraph_trees import cudagraphify
+        sig = inspect.signature(cudagraphify)
+        self.assertIn("fqn_map", sig.parameters)
+
+    def test_add_function_accepts_fqn_map(self):
+        import inspect
+        from torch._inductor.cudagraph_trees import CUDAGraphTreeManager
+        sig = inspect.signature(CUDAGraphTreeManager.add_function)
+        self.assertIn("fqn_map", sig.parameters)
 
 
 if __name__ == "__main__":

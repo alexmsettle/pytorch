@@ -488,6 +488,7 @@ def cudagraphify(
     placeholders: tuple[PlaceholderInfo, ...] = (),
     mutated_input_idxs: tuple[int, ...] = (),
     compile_id: CompileId | None = None,
+    fqn_map: dict[str, str] | None = None,
 ) -> tuple[ModelType, OutputType]:
     assert not (is_backward and is_inference)
     mode = (
@@ -509,6 +510,7 @@ def cudagraphify(
         placeholders,
         mutated_input_idxs,
         compile_id,
+        fqn_map=fqn_map or {},
     )
 
 
@@ -2446,6 +2448,7 @@ class CUDAGraphTreeManager:
         placeholders: tuple[PlaceholderInfo, ...],
         mutated_input_idxs: tuple[int, ...],
         compile_id: CompileId | None,
+        fqn_map: dict[str, str] | None = None,
     ) -> tuple[
         ModelType,
         OutputType,
@@ -2459,6 +2462,7 @@ class CUDAGraphTreeManager:
             tuple(t for t in constants if isinstance(t, torch.Tensor) and t.is_cuda),
             placeholders,
             mutated_input_idxs,
+            fqn_map=fqn_map or {},
         )
         self.id_to_mode[id] = mode
         self.id_to_compile_id[id] = compile_id

@@ -251,6 +251,9 @@ def cudagraph_post_compile(
             constants=tuple(tensor_constants.values()),
             placeholders=placeholders,
             mutated_input_idxs=tuple(compiled_graph.mutated_input_idxs),
+            fqn_map=compiled_graph.cudagraph_info.fqn_map
+            if compiled_graph.cudagraph_info is not None
+            else {},
         )
 
         policy = config.cudagraph_policy
@@ -658,8 +661,9 @@ class CompiledFxGraph(OutputCode):
                 ]
                 cudagraph_fail_reasons = [s for b, s in cudagraph_tests if not b]
                 placeholders = tuple(get_placeholder_info(gm.graph))
+                fqn_map = gm.meta.get("dynamo_flat_name_to_original_fqn", {})
                 cudagraph_info = CudagraphCachedInfo(
-                    placeholders, stack_traces, cudagraph_fail_reasons
+                    placeholders, stack_traces, cudagraph_fail_reasons, fqn_map
                 )
 
         self.cudagraph_info = cudagraph_info
