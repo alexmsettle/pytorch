@@ -1326,6 +1326,24 @@ class CUDAGraphNode:
             ]
             check_memory_pool(self.device, self.cuda_graphs_pool, memory)
 
+        should_annotate = (
+            config.triton.cudagraph_kernel_annotations
+            and bool(self.wrapped_function.fqn_map)
+        )
+
+        if should_annotate:
+            from torch.cuda import _graph_annotations
+            annotation_ctx: contextlib.AbstractContextManager[None] = (
+                _graph_annotations.mark_kernels(
+                    {
+                        "fqn_map": self.wrapped_function.fqn_map,
+                        "graph_id": self.id.id,
+                    }
+                )
+            )
+        else:
+            annotation_ctx = contextlib.nullcontext()
+
         with (
             preserve_rng_state(),
             torch.cuda.device(self.device),
@@ -1335,9 +1353,11 @@ class CUDAGraphNode:
                 stream=self.stream,
                 pool=self.cuda_graphs_pool,
                 capture_error_mode="thread_local",
+                enable_annotations=should_annotate,
             ),
             CUDAGraphCaptureControlFlowOpDispatchMode(),
             get_history_recording(),
+            annotation_ctx,
         ):
             static_outputs = model(inputs)
 

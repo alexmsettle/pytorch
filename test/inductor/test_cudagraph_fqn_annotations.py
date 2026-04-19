@@ -62,6 +62,16 @@ class TestCudagraphFqnAnnotations(TestCase):
         sig = inspect.signature(CUDAGraphTreeManager.add_function)
         self.assertIn("fqn_map", sig.parameters)
 
+    def test_record_uses_annotation_ctx_when_enabled(self):
+        """When cudagraph_kernel_annotations=True, _record() uses mark_kernels context."""
+        import inspect
+        from torch._inductor.cudagraph_trees import CUDAGraphNode
+        source = inspect.getsource(CUDAGraphNode._record)
+        self.assertIn("should_annotate", source)
+        self.assertIn("mark_kernels", source)
+        self.assertIn("annotation_ctx", source)
+        self.assertIn("enable_annotations=should_annotate", source)
+
 
 if __name__ == "__main__":
     run_tests()
