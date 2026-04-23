@@ -6,7 +6,7 @@ to count nodes before and after the wrapped region.  Nodes at indices
 or memcpy node found is annotated by its ``toolsId`` so it can later
 be matched to profiler trace events.
 
-The annotations can be pickled and later merged into a Chrome profiler
+The annotations can be saved as JSON and later merged into a Chrome profiler
 trace using ``torch.cuda._annotate_cuda_graph_trace``.
 
 Requires ``cuda.bindings`` package and a CUDA driver that supports
@@ -34,9 +34,11 @@ Usage during capture::
     remap_to_exec_graph(graph)
 """
 
+import json
 from collections import defaultdict
 from contextlib import contextmanager
 from logging import getLogger
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -319,6 +321,9 @@ def resolve_pending_annotations() -> None:
                     else:
                         merged.setdefault("name", ann)
                 _kernel_annotations[tools_id].append(merged)
+        logger.debug(
+            "resolve_pending_annotations: annotated %d kernel nodes", len(_kernel_annotations)
+        )
     except Exception:
         logger.exception("resolve_pending_annotations failed")
     finally:
@@ -367,11 +372,28 @@ def remap_to_exec_graph(torch_cuda_graph: torch.cuda.CUDAGraph) -> None:
 
     _kernel_annotations.clear()
     _kernel_annotations.update(remapped)
+    logger.debug(
+        "remap_to_exec_graph: remapped %d annotations to exec graph id %d",
+        len(remapped),
+        exec_graph_id,
+    )
 
 
 def get_kernel_annotations() -> dict[int, list[Any]]:
     """Return the current kernel annotation map (toolsId -> annotations)."""
     return _kernel_annotations
+
+
+def save_kernel_annotations(path: str | Path) -> None:
+    """Save the current kernel annotations to a JSON file.
+
+    Keys are toolsId integers serialized as strings; values are lists of
+    annotation dicts.  The file can be passed directly to
+    ``inject_nvtx_ranges_into_nsys_sqlite`` or the Chrome trace annotator.
+    """
+    serializable = {str(k): v for k, v in _kernel_annotations.items()}
+    with open(path, "w") as f:
+        json.dump(serializable, f)
 
 
 def clear_kernel_annotations() -> None:

@@ -1331,8 +1331,20 @@ class CUDAGraphNode:
             and bool(self.wrapped_function.fqn_map)
         )
 
+        if config.triton.cudagraph_kernel_annotations and not should_annotate:
+            log.debug(
+                "cudagraph_kernel_annotations enabled but fqn_map is empty for graph %s; "
+                "annotations skipped (dynamo_flat_name_to_original_fqn not present in gm.meta)",
+                self.id.id,
+            )
+
         if should_annotate:
             from torch.cuda import _graph_annotations
+            log.debug(
+                "Recording cudagraph %s with FQN annotations (%d params in fqn_map)",
+                self.id.id,
+                len(self.wrapped_function.fqn_map),
+            )
             annotation_ctx: contextlib.AbstractContextManager[None] = (
                 _graph_annotations.mark_kernels(
                     {

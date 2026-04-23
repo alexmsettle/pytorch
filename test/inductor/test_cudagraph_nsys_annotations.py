@@ -1,6 +1,6 @@
 # Owner(s): ["module: inductor"]
+import json
 import os
-import pickle
 import sqlite3
 import tempfile
 import unittest
@@ -30,13 +30,18 @@ def _make_nsys_db(path: str, kernel_rows: list[tuple]) -> None:
     conn.close()
 
 
+def _write_annotations(path: str, annotations: dict) -> None:
+    with open(path, "w") as f:
+        json.dump({str(k): v for k, v in annotations.items()}, f)
+
+
 class TestInjectNvtxRanges(TestCase):
     def test_adds_nvtx_rows_for_annotated_kernels(self):
         from torch.cuda._annotate_cuda_graph_trace import inject_nvtx_ranges_into_nsys_sqlite
 
         with tempfile.TemporaryDirectory() as d:
             db = os.path.join(d, "trace.sqlite")
-            pkl = os.path.join(d, "ann.pkl")
+            ann = os.path.join(d, "ann.json")
             out = os.path.join(d, "out.sqlite")
 
             _make_nsys_db(db, [
@@ -44,10 +49,9 @@ class TestInjectNvtxRanges(TestCase):
                 (2100, 3000, 0, 42, 7, "kernel_B"),
                 (3500, 4000, 0, 99, 7, "kernel_C"),  # unannotated
             ])
-            with open(pkl, "wb") as f:
-                pickle.dump({42: {"fqn_map": {"weight": "encoder.weight"}, "graph_id": 0}}, f)
+            _write_annotations(ann, {42: {"fqn_map": {"weight": "encoder.weight"}, "graph_id": 0}})
 
-            inject_nvtx_ranges_into_nsys_sqlite(db, pkl, out)
+            inject_nvtx_ranges_into_nsys_sqlite(db, ann, out)
 
             # Original untouched
             orig = sqlite3.connect(db)
@@ -67,17 +71,16 @@ class TestInjectNvtxRanges(TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             db = os.path.join(d, "trace.sqlite")
-            pkl = os.path.join(d, "ann.pkl")
+            ann = os.path.join(d, "ann.json")
             out = os.path.join(d, "out.sqlite")
 
             _make_nsys_db(db, [
                 (500, 600, 0, 7, 3, "k1"),
                 (700, 900, 0, 7, 3, "k2"),
             ])
-            with open(pkl, "wb") as f:
-                pickle.dump({7: {"fqn_map": {"w": "decoder.weight"}, "graph_id": 1}}, f)
+            _write_annotations(ann, {7: {"fqn_map": {"w": "decoder.weight"}, "graph_id": 1}})
 
-            inject_nvtx_ranges_into_nsys_sqlite(db, pkl, out)
+            inject_nvtx_ranges_into_nsys_sqlite(db, ann, out)
 
             result = sqlite3.connect(out)
             rows = result.execute("SELECT start, end FROM NVTX_EVENTS").fetchall()
@@ -92,14 +95,13 @@ class TestInjectNvtxRanges(TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             db = os.path.join(d, "trace.sqlite")
-            pkl = os.path.join(d, "ann.pkl")
+            ann = os.path.join(d, "ann.json")
             out = os.path.join(d, "out.sqlite")
 
             _make_nsys_db(db, [(100, 200, 0, 55, 1, "k")])
-            with open(pkl, "wb") as f:
-                pickle.dump({99: {"fqn_map": {"w": "other.w"}, "graph_id": 0}}, f)
+            _write_annotations(ann, {99: {"fqn_map": {"w": "other.w"}, "graph_id": 0}})
 
-            inject_nvtx_ranges_into_nsys_sqlite(db, pkl, out)
+            inject_nvtx_ranges_into_nsys_sqlite(db, ann, out)
 
             result = sqlite3.connect(out)
             count = result.execute("SELECT COUNT(*) FROM NVTX_EVENTS").fetchone()[0]
@@ -111,12 +113,11 @@ class TestInjectNvtxRanges(TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             db = os.path.join(d, "trace.sqlite")
-            pkl = os.path.join(d, "ann.pkl")
+            ann = os.path.join(d, "ann.json")
             sqlite3.connect(db).close()
-            with open(pkl, "wb") as f:
-                pickle.dump({}, f)
+            _write_annotations(ann, {})
             with self.assertRaises(ValueError):
-                inject_nvtx_ranges_into_nsys_sqlite(db, pkl, db)
+                inject_nvtx_ranges_into_nsys_sqlite(db, ann, db)
 
     def test_common_prefix_label(self):
         """Labels use the longest common FQN prefix across parameters."""
@@ -124,22 +125,21 @@ class TestInjectNvtxRanges(TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             db = os.path.join(d, "trace.sqlite")
-            pkl = os.path.join(d, "ann.pkl")
+            ann = os.path.join(d, "ann.json")
             out = os.path.join(d, "out.sqlite")
 
             _make_nsys_db(db, [(100, 200, 0, 5, 1, "k")])
-            with open(pkl, "wb") as f:
-                pickle.dump({
-                    5: {
-                        "fqn_map": {
-                            "p1": "encoder.linear.weight",
-                            "p2": "encoder.linear.bias",
-                        },
-                        "graph_id": 0,
-                    }
-                }, f)
+            _write_annotations(ann, {
+                5: {
+                    "fqn_map": {
+                        "p1": "encoder.linear.weight",
+                        "p2": "encoder.linear.bias",
+                    },
+                    "graph_id": 0,
+                }
+            })
 
-            inject_nvtx_ranges_into_nsys_sqlite(db, pkl, out)
+            inject_nvtx_ranges_into_nsys_sqlite(db, ann, out)
 
             result = sqlite3.connect(out)
             texts = [r[0] for r in result.execute("SELECT text FROM NVTX_EVENTS").fetchall()]

@@ -2,29 +2,28 @@
 """Post-process a profiler trace to add CUDA graph kernel annotations.
 
 Reads a profiler trace (gzipped or plain JSON) and a kernel annotations
-pickle, matches kernel events by their graph node id, and writes an
+JSON file, matches kernel events by their graph node id, and writes an
 annotated trace with the annotation fields added to each kernel event's
 args (displayed alongside grid/block size in trace viewers).
 
-The annotations pickle is auto-discovered from the trace file's parent
+The annotations JSON file is auto-discovered from the trace file's parent
 directory (one level up, matching the rank from the trace filename).
 
 Usage:
-    python -m torch.cuda._annotate_cuda_graph_trace <trace_file> [-a <annotations_pkl>] [-o <output_file>]
+    python -m torch.cuda._annotate_cuda_graph_trace <trace_file> [-a <annotations_json>] [-o <output_file>]
 
 Examples:
-    # Auto-discover annotations pickle from trace location
+    # Auto-discover annotations JSON from trace location
     python -m torch.cuda._annotate_cuda_graph_trace \\
         traces/step_000000000014/000000.*.pt.trace.json.gz
 
-    # Explicit annotations pickle
-    python -m torch.cuda._annotate_cuda_graph_trace trace.json.gz -a annotations.pkl
+    # Explicit annotations JSON
+    python -m torch.cuda._annotate_cuda_graph_trace trace.json.gz -a annotations.json
 """
 
 import argparse
 import gzip
 import json
-import pickle
 import re
 import sys
 from collections import defaultdict
@@ -261,12 +260,12 @@ def save_trace(trace: dict, path: Path) -> None:
             json.dump(trace, f)
 
 
-def _find_annotations_pkl(trace_file: Path) -> Path | None:
-    """Auto-discover the annotations pickle from the trace file location.
+def _find_annotations_json(trace_file: Path) -> Path | None:
+    """Auto-discover the annotations JSON from the trace file location.
 
     Trace files live in e.g. ``traces/step_000000000014/000000.<id>.pt.trace.json.gz``
-    where the leading digits are the rank. The pickle lives one level up:
-    ``traces/kernel_annotations_rank0_*.pkl``.
+    where the leading digits are the rank. The annotations file lives one level up:
+    ``traces/kernel_annotations_rank0_*.json``.
     """
     match = re.match(r"^(\d+)", trace_file.name)
     if not match:
@@ -274,10 +273,14 @@ def _find_annotations_pkl(trace_file: Path) -> Path | None:
     rank = int(match.group(1))
 
     traces_dir = trace_file.parent.parent
-    candidates = sorted(traces_dir.glob(f"kernel_annotations_rank{rank}_*.pkl"))
+    candidates = sorted(traces_dir.glob(f"kernel_annotations_rank{rank}_*.json"))
     if candidates:
         return candidates[0]
     return None
+
+
+# Backward-compatible alias for code that still passes a .pkl path.
+_find_annotations_pkl = _find_annotations_json
 
 
 def main() -> None:
@@ -292,7 +295,7 @@ def main() -> None:
         "--annotations",
         type=Path,
         default=None,
-        help="Kernel annotations pickle file. Auto-discovered if omitted.",
+        help="Kernel annotations JSON file. Auto-discovered if omitted.",
     )
     parser.add_argument(
         "-o",
@@ -309,20 +312,21 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    annotations_pkl = args.annotations
-    if annotations_pkl is None:
-        annotations_pkl = _find_annotations_pkl(args.trace_file)
-        if annotations_pkl is None:
+    annotations_json = args.annotations
+    if annotations_json is None:
+        annotations_json = _find_annotations_json(args.trace_file)
+        if annotations_json is None:
             print(
-                f"Could not auto-discover annotations pickle for {args.trace_file}. "
+                f"Could not auto-discover annotations JSON for {args.trace_file}. "
                 f"Use -a to specify it explicitly.",
                 file=sys.stderr,
             )
             sys.exit(1)
-        print(f"Auto-discovered annotations: {annotations_pkl}")
+        print(f"Auto-discovered annotations: {annotations_json}")
 
-    with open(annotations_pkl, "rb") as f:
-        annotations = pickle.load(f)
+    with open(annotations_json) as f:
+        raw = json.load(f)
+    annotations = {int(k): v for k, v in raw.items()}
     print(f"Loaded {len(annotations)} kernel annotations")
 
     trace = load_trace(args.trace_file)
@@ -413,7 +417,7 @@ def _build_layer_ranges(
 
 def inject_nvtx_ranges_into_nsys_sqlite(
     sqlite_path: str,
-    annotations_pkl_path: str,
+    annotations_path: str,
     output_sqlite_path: str,
 ) -> None:
     """
@@ -429,8 +433,8 @@ def inject_nvtx_ranges_into_nsys_sqlite(
     Args:
         sqlite_path: Path to the nsys-exported SQLite file
                      (produced with ``nsys export --type sqlite``).
-        annotations_pkl_path: Path to the kernel annotations pickle
-                     (produced by torch.cuda._graph_annotations).
+        annotations_path: Path to the kernel annotations JSON file
+                     (produced by ``torch.cuda._graph_annotations.save_kernel_annotations``).
         output_sqlite_path: Path for the annotated output SQLite.
                      Must differ from ``sqlite_path``.
 
@@ -446,8 +450,9 @@ def inject_nvtx_ranges_into_nsys_sqlite(
 
     shutil.copy2(sqlite_path, output_sqlite_path)
 
-    with open(annotations_pkl_path, "rb") as f:
-        annotations: dict[int, dict] = pickle.load(f)
+    with open(annotations_path) as f:
+        raw: dict[str, list] = json.load(f)
+    annotations: dict[int, list] = {int(k): v for k, v in raw.items()}
 
     conn = sqlite3.connect(output_sqlite_path)
     cur = conn.execute("SELECT * FROM CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL")
