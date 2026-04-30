@@ -375,6 +375,7 @@ def cudagraph_partition_post_compile(
             constants=tuple(partition_metadata.constants.values()),
             placeholders=partition_metadata.placeholders,
             mutated_input_idxs=tuple(partition_metadata.mutated_input_idxs),
+            fqn_map=compiled_graph.cudagraph_info.fqn_map,
         )
         cudagraphify_fns.append(cudagraphify_fn)
 

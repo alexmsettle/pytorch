@@ -1326,17 +1326,17 @@ class CUDAGraphNode:
             ]
             check_memory_pool(self.device, self.cuda_graphs_pool, memory)
 
-        should_annotate = (
-            config.triton.cudagraph_kernel_annotations
-            and bool(self.wrapped_function.fqn_map)
-        )
-
-        if config.triton.cudagraph_kernel_annotations and not should_annotate:
+        if config.triton.cudagraph_kernel_annotations and not self.wrapped_function.fqn_map:
             log.debug(
                 "cudagraph_kernel_annotations enabled but fqn_map is empty for graph %s; "
                 "annotations skipped (dynamo_flat_name_to_original_fqn not present in gm.meta)",
                 self.id.id,
             )
+
+        should_annotate = (
+            config.triton.cudagraph_kernel_annotations
+            and bool(self.wrapped_function.fqn_map)
+        )
 
         if should_annotate:
             from torch.cuda import _graph_annotations
