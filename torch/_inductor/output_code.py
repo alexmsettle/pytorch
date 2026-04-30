@@ -313,6 +313,7 @@ def cudagraph_partition_post_compile(
         return
 
     assert compiled_graph.cudagraph_info is not None
+    print(f"[debug2] cudagraph_partition_post_compile: fqn_map={compiled_graph.cudagraph_info.fqn_map}")  # temporary
     cudagraph_fail_reasons = compiled_graph.cudagraph_info.cudagraph_fail_reasons
 
     if (
