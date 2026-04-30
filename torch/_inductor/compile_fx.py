@@ -1152,6 +1152,8 @@ def _compile_fx_inner(
                 },
                 payload_fn=lambda: json.dumps(cache_info),
             )
+        if isinstance(compiled_graph, CompiledFxGraph):
+            compiled_graph.repopulate_fqn_map(gm)
         compiled_graph.post_compile(example_inputs, constants, graph_kwargs)
 
         policy = config.cudagraph_policy

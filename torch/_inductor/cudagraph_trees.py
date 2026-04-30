@@ -2486,7 +2486,6 @@ class CUDAGraphTreeManager:
         OutputType,
     ]:
         id = self.new_func_id()
-        print(f"[debug3] add_function: fqn_map={fqn_map}")  # temporary
         self.ids_to_stack_traces[id] = stack_traces
         self.ids_to_funcs[id] = WrappedFunction(
             model,

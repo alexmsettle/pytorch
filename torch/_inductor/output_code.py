@@ -313,7 +313,6 @@ def cudagraph_partition_post_compile(
         return
 
     assert compiled_graph.cudagraph_info is not None
-    print(f"[debug2] cudagraph_partition_post_compile: fqn_map={compiled_graph.cudagraph_info.fqn_map}")  # temporary
     cudagraph_fail_reasons = compiled_graph.cudagraph_info.cudagraph_fail_reasons
 
     if (
@@ -664,7 +663,6 @@ class CompiledFxGraph(OutputCode):
                 cudagraph_fail_reasons = [s for b, s in cudagraph_tests if not b]
                 placeholders = tuple(get_placeholder_info(gm.graph))
                 fqn_map = gm.meta.get("dynamo_flat_name_to_original_fqn", {})
-                print(f"[debug_init] CompiledFxGraph.__init__: fqn_map={fqn_map}")  # temporary
                 cudagraph_info = CudagraphCachedInfo(
                     placeholders, stack_traces, cudagraph_fail_reasons, fqn_map
                 )
@@ -733,6 +731,22 @@ class CompiledFxGraph(OutputCode):
         finally:
             get_runtime_metrics_context().finish()
             AutotuneCacheBundler.end_compile()
+
+    def repopulate_fqn_map(self, gm: torch.fx.GraphModule) -> None:
+        """Repopulate fqn_map from gm.meta on both cache hit and cache miss.
+
+        CudagraphCachedInfo is serialized to the FX graph cache. If the cached
+        entry predates the fqn_map field, deserialization leaves fqn_map={}.
+        This method is called in compile_fx_inner (which runs on hit and miss
+        alike) so the correct map is always present before post_compile runs.
+        """
+        if self.cudagraph_info is None:
+            return
+        fqn_map = gm.meta.get("dynamo_flat_name_to_original_fqn", {})
+        if fqn_map:
+            self.cudagraph_info = dataclasses.replace(
+                self.cudagraph_info, fqn_map=fqn_map
+            )
 
     def post_compile(
         self,
