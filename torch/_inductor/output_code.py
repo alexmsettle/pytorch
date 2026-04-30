@@ -664,6 +664,7 @@ class CompiledFxGraph(OutputCode):
                 cudagraph_fail_reasons = [s for b, s in cudagraph_tests if not b]
                 placeholders = tuple(get_placeholder_info(gm.graph))
                 fqn_map = gm.meta.get("dynamo_flat_name_to_original_fqn", {})
+                print(f"[debug_init] CompiledFxGraph.__init__: fqn_map={fqn_map}")  # temporary
                 cudagraph_info = CudagraphCachedInfo(
                     placeholders, stack_traces, cudagraph_fail_reasons, fqn_map
                 )
