@@ -313,6 +313,10 @@ def cudagraph_partition_post_compile(
         return
 
     assert compiled_graph.cudagraph_info is not None
+    log.debug(
+        "[fqn_trace] cudagraph_partition_post_compile: cudagraph_info.fqn_map=%s",
+        compiled_graph.cudagraph_info.fqn_map,
+    )
     cudagraph_fail_reasons = compiled_graph.cudagraph_info.cudagraph_fail_reasons
 
     if (
@@ -663,11 +667,19 @@ class CompiledFxGraph(OutputCode):
                 cudagraph_fail_reasons = [s for b, s in cudagraph_tests if not b]
                 placeholders = tuple(get_placeholder_info(gm.graph))
                 fqn_map = gm.meta.get("dynamo_flat_name_to_original_fqn", {})
+                log.debug(
+                    "[fqn_trace] CompiledFxGraph.__init__: fqn_map from gm.meta=%s", fqn_map
+                )
                 cudagraph_info = CudagraphCachedInfo(
                     placeholders, stack_traces, cudagraph_fail_reasons, fqn_map
                 )
 
         self.cudagraph_info = cudagraph_info
+        log.debug(
+            "[fqn_trace] CompiledFxGraph.__init__ done: cudagraph_info=%s, fqn_map=%s",
+            "None" if cudagraph_info is None else "present",
+            cudagraph_info.fqn_map if cudagraph_info is not None else "N/A",
+        )
         self.compile_region_name = compile_region_name
         self.inputs_to_check = inputs_to_check
         self.fx_kwargs = fx_kwargs
@@ -740,12 +752,24 @@ class CompiledFxGraph(OutputCode):
         This method is called in compile_fx_inner (which runs on hit and miss
         alike) so the correct map is always present before post_compile runs.
         """
+        log.debug(
+            "[fqn_trace] repopulate_fqn_map: cudagraph_info=%s",
+            "None" if self.cudagraph_info is None else "present",
+        )
         if self.cudagraph_info is None:
             return
         fqn_map = gm.meta.get("dynamo_flat_name_to_original_fqn", {})
+        log.debug("[fqn_trace] repopulate_fqn_map: fqn_map from gm.meta=%s", fqn_map)
         if fqn_map:
             self.cudagraph_info = dataclasses.replace(
                 self.cudagraph_info, fqn_map=fqn_map
+            )
+            log.debug("[fqn_trace] repopulate_fqn_map: updated cudagraph_info.fqn_map")
+        else:
+            log.debug(
+                "[fqn_trace] repopulate_fqn_map: fqn_map empty, "
+                "cudagraph_info.fqn_map unchanged=%s",
+                self.cudagraph_info.fqn_map,
             )
 
     def post_compile(

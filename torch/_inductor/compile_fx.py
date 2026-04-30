@@ -1153,7 +1153,18 @@ def _compile_fx_inner(
                 payload_fn=lambda: json.dumps(cache_info),
             )
         if isinstance(compiled_graph, CompiledFxGraph):
+            log.debug(
+                "[fqn_trace] compile_fx_inner: CompiledFxGraph, "
+                "dynamo_flat_name_to_original_fqn in gm.meta=%s, value=%s",
+                "dynamo_flat_name_to_original_fqn" in gm.meta,
+                gm.meta.get("dynamo_flat_name_to_original_fqn", {}),
+            )
             compiled_graph.repopulate_fqn_map(gm)
+        else:
+            log.debug(
+                "[fqn_trace] compile_fx_inner: compiled_graph type=%s, skipping repopulate_fqn_map",
+                type(compiled_graph).__name__,
+            )
         compiled_graph.post_compile(example_inputs, constants, graph_kwargs)
 
         policy = config.cudagraph_policy
@@ -1895,6 +1906,7 @@ def cudagraphify(
     mutated_input_idxs: tuple[int, ...] = (),
     fqn_map: dict[str, str] | None = None,
 ) -> Callable[..., Any]:
+    log.debug("[fqn_trace] cudagraphify: fqn_map=%s", fqn_map)
     from torch._inductor.cudagraph_trees import (
         cudagraphify_impl as new_cudagraphify_impl,
     )

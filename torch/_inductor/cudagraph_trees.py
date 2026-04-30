@@ -1326,6 +1326,13 @@ class CUDAGraphNode:
             ]
             check_memory_pool(self.device, self.cuda_graphs_pool, memory)
 
+        log.debug(
+            "[fqn_trace] _record: graph=%s, cudagraph_kernel_annotations=%s, "
+            "wrapped_function.fqn_map=%s",
+            self.id.id,
+            config.triton.cudagraph_kernel_annotations,
+            self.wrapped_function.fqn_map,
+        )
         if config.triton.cudagraph_kernel_annotations and not self.wrapped_function.fqn_map:
             log.debug(
                 "cudagraph_kernel_annotations enabled but fqn_map is empty for graph %s; "
@@ -2486,6 +2493,7 @@ class CUDAGraphTreeManager:
         OutputType,
     ]:
         id = self.new_func_id()
+        log.debug("[fqn_trace] add_function: id=%s, fqn_map=%s", id, fqn_map)
         self.ids_to_stack_traces[id] = stack_traces
         self.ids_to_funcs[id] = WrappedFunction(
             model,
