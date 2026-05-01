@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+import logging
 import re
 from typing import Any, TYPE_CHECKING
 
@@ -10,6 +11,8 @@ from torch.utils._ordered_set import OrderedSet
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+log = logging.getLogger(__name__)
 
 
 def _get_module_stack(node: fx.Node) -> list[tuple[str, type[Any]]]:
@@ -118,14 +121,26 @@ def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
     module_names: OrderedSet[str] = OrderedSet()
     for snode in scheduler_nodes:
         if snode.node is None:
+            log.debug("[fqn_trace] get_fused_kernel_module_fqn: snode.node is None for %s", snode)
             continue
-        for fx_node in snode.node.get_origins():
+        origins = snode.node.get_origins()
+        log.debug(
+            "[fqn_trace] get_fused_kernel_module_fqn: snode=%s origins=%s",
+            snode,
+            [
+                (n.name, n.meta.get("nn_module_stack"))
+                for n in origins
+            ],
+        )
+        for fx_node in origins:
             stack = fx_node.meta.get("nn_module_stack")
             if stack:
                 fqn = next(reversed(stack.values()))[0]
                 if fqn:
                     module_names.add(fqn)
-    return " + ".join(module_names) if module_names else None
+    result = " + ".join(module_names) if module_names else None
+    log.debug("[fqn_trace] get_fused_kernel_module_fqn: result=%s", result)
+    return result
 
 
 def make_graph_view(
