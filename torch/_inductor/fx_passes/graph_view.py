@@ -107,6 +107,27 @@ def _is_root(stack: str) -> bool:
     return stack == ""
 
 
+def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
+    """
+    Return a human-readable FQN annotation for a fused kernel.
+
+    Collects the innermost nn_module_stack entry from each origin FX node of
+    the contributing scheduler nodes and joins distinct names with " + ".
+    Returns None if no nn_module_stack metadata is present.
+    """
+    module_names: OrderedSet[str] = OrderedSet()
+    for snode in scheduler_nodes:
+        if snode.node is None:
+            continue
+        for fx_node in snode.node.get_origins():
+            stack = fx_node.meta.get("nn_module_stack")
+            if stack:
+                fqn = next(reversed(stack.values()))[0]
+                if fqn:
+                    module_names.add(fqn)
+    return " + ".join(module_names) if module_names else None
+
+
 def make_graph_view(
     graph: fx.Graph,
     module_stack_fn: Callable[[fx.Node], list[tuple[str, type[Any]]]] | None = None,

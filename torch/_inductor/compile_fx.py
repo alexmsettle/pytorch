@@ -2895,6 +2895,9 @@ def _compile_fx_main(
         ) -> OutputCode:
             with dynamo_utils.dynamo_timed("compile_fx.<locals>.fw_compiler_base"):
                 if isinstance(model_, GraphModule):
+                    fqn_map = model_.meta.get("dynamo_flat_name_to_original_fqn")
+                    if fqn_map is not None:
+                        gm.meta["dynamo_flat_name_to_original_fqn"] = fqn_map
                     num_orig_model_outputs = get_num_model_outputs(model_)
                 else:
                     num_orig_model_outputs = get_num_model_outputs(gm)

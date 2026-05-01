@@ -1327,41 +1327,15 @@ class CUDAGraphNode:
             check_memory_pool(self.device, self.cuda_graphs_pool, memory)
 
         log.debug(
-            "[fqn_trace] _record: graph=%s, cudagraph_kernel_annotations=%s, "
-            "wrapped_function.fqn_map=%s",
+            "[fqn_trace] _record: graph=%s, cudagraph_kernel_annotations=%s",
             self.id.id,
             config.triton.cudagraph_kernel_annotations,
-            self.wrapped_function.fqn_map,
-        )
-        if config.triton.cudagraph_kernel_annotations and not self.wrapped_function.fqn_map:
-            log.debug(
-                "cudagraph_kernel_annotations enabled but fqn_map is empty for graph %s; "
-                "annotations skipped (dynamo_flat_name_to_original_fqn not present in gm.meta)",
-                self.id.id,
-            )
-
-        should_annotate = (
-            config.triton.cudagraph_kernel_annotations
-            and bool(self.wrapped_function.fqn_map)
         )
 
-        if should_annotate:
-            from torch.cuda import _graph_annotations
-            log.debug(
-                "Recording cudagraph %s with FQN annotations (%d params in fqn_map)",
-                self.id.id,
-                len(self.wrapped_function.fqn_map),
-            )
-            annotation_ctx: contextlib.AbstractContextManager[None] = (
-                _graph_annotations.mark_kernels(
-                    {
-                        "fqn_map": self.wrapped_function.fqn_map,
-                        "graph_id": self.id.id,
-                    }
-                )
-            )
-        else:
-            annotation_ctx = contextlib.nullcontext()
+        # Per-kernel annotations are emitted directly into the generated wrapper code
+        # via AnnotatedKernelCallLine; enable_annotations tells the CUDA graph capture
+        # to process those mark_kernels calls as they execute.
+        should_annotate = config.triton.cudagraph_kernel_annotations
 
         with (
             preserve_rng_state(),
@@ -1376,7 +1350,6 @@ class CUDAGraphNode:
             ),
             CUDAGraphCaptureControlFlowOpDispatchMode(),
             get_history_recording(),
-            annotation_ctx,
         ):
             static_outputs = model(inputs)
 
