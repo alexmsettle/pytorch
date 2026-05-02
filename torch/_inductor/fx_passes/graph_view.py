@@ -95,28 +95,42 @@ class GraphView:
 
 def _clean_stack_name(stack_name: str) -> str:
     """
-    Clean up FX node's nn_module_stack metadata string to match the module name hierarchies
+    Clean up FX node's nn_module_stack metadata string to a dot-separated path.
 
-    Example:
+    L['self'] is replaced with L as a fixed anchor for the root of the network.
+
+    Examples:
         Input: "L['self']._modules['layers']['0']._modules['attention']"
-        Output: "layers.0.attention"
+        Output: "L.layers.0.attention"
+
+        Input: "L['self'].networks.1.conv"
+        Output: "L.networks.1.conv"
     """
     cleaned = re.sub(r"^L\['self'\]\.?", "", stack_name)
     parts = re.findall(r"\['([^']+)'\]", cleaned)
-    return ".".join(parts) if parts else cleaned
+    suffix = ".".join(parts) if parts else cleaned
+    return f"L.{suffix}" if suffix else "L"
 
 
 def _is_root(stack: str) -> bool:
     return stack == ""
 
 
+def _strip_instance_suffix(name: str) -> str:
+    """Strip the _N uniqueness suffix added by FX to node names (e.g. convolution_1 -> convolution)."""
+    return re.sub(r"_\d+$", "", name)
+
+
 def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
     """
     Return a human-readable FQN annotation for a fused kernel.
 
-    Collects the innermost nn_module_stack entry from each origin FX node of
-    the contributing scheduler nodes and joins distinct names with " + ".
-    Returns None if no nn_module_stack metadata is present.
+    For each origin FX node, builds a name of the form
+    '<root_class>.<module_path>.<op_name>' using the root module class name
+    (resolved by scanning the FX graph), the innermost nn_module_stack entry,
+    and the FX node name (stripped of its _N uniqueness suffix).
+    Joins distinct names with " + ". Returns None if no nn_module_stack
+    metadata is present.
     """
     module_names: OrderedSet[str] = OrderedSet()
     for snode in scheduler_nodes:
@@ -128,16 +142,22 @@ def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
             "[fqn_trace] get_fused_kernel_module_fqn: snode=%s origins=%s",
             snode,
             [
-                (n.name, n.meta.get("nn_module_stack"))
+                (
+                    n.name,
+                    f"{_clean_stack_name(next(reversed(s.values()))[0])}.{_strip_instance_suffix(n.name)}"
+                    if (s := n.meta.get("nn_module_stack"))
+                    else None,
+                )
                 for n in origins
             ],
         )
         for fx_node in origins:
             stack = fx_node.meta.get("nn_module_stack")
             if stack:
-                fqn = _clean_stack_name(next(reversed(stack.values()))[0])
-                if fqn:
-                    module_names.add(fqn)
+                module_path = _clean_stack_name(next(reversed(stack.values()))[0])
+                if module_path:
+                    op_name = _strip_instance_suffix(fx_node.name)
+                    module_names.add(f"{module_path}.{op_name}")
     result = " + ".join(module_names) if module_names else None
     log.debug("[fqn_trace] get_fused_kernel_module_fqn: result=%s", result)
     return result
