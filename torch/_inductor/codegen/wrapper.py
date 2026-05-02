@@ -3311,7 +3311,14 @@ class PythonWrapperCodegen(CodeGen):
             current_stream_idx=current_stream_idx,
         )
         module_fqn = getattr(V.graph, "_current_kernel_module_fqn", None)
+        log.debug(
+            "[fqn_trace] generate_kernel_call: kernel=%s module_fqn=%s cudagraph_kernel_annotations=%s",
+            kernel_name,
+            module_fqn,
+            config.triton.cudagraph_kernel_annotations,
+        )
         if module_fqn and config.triton.cudagraph_kernel_annotations:
+            log.debug("[fqn_trace] generate_kernel_call: emitting AnnotatedKernelCallLine for %s", kernel_name)
             self.writeline(AnnotatedKernelCallLine(kernel_line, module_fqn))
         else:
             self.writeline(kernel_line)
