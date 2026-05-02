@@ -733,6 +733,10 @@ class AnnotatedKernelCallLine(WrapperLine):
     module_fqn: str
 
     def codegen(self, code: IndentedBuffer) -> None:
+        log.debug(
+            "[fqn_trace] AnnotatedKernelCallLine.codegen: writing mark_kernels(%r)",
+            self.module_fqn,
+        )
         code.writeline(
             f"with _graph_annotations.mark_kernels({self.module_fqn!r}):"
         )

@@ -135,7 +135,7 @@ def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
         for fx_node in origins:
             stack = fx_node.meta.get("nn_module_stack")
             if stack:
-                fqn = next(reversed(stack.values()))[0]
+                fqn = _clean_stack_name(next(reversed(stack.values()))[0])
                 if fqn:
                     module_names.add(fqn)
     result = " + ".join(module_names) if module_names else None
