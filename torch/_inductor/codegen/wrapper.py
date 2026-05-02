@@ -748,6 +748,30 @@ class AnnotatedKernelCallLine(WrapperLine):
 
 
 @dataclasses.dataclass
+class AnnotatedExternKernelBlock(WrapperLine):
+    """Wraps extern kernel codegen lines with mark_kernels for per-kernel CUDA graph FQN annotation."""
+
+    inner_lines: list[Any]
+    module_fqn: str
+
+    def codegen(self, code: IndentedBuffer) -> None:
+        log.debug(
+            "[fqn_trace] AnnotatedExternKernelBlock.codegen: writing mark_kernels(%r)",
+            self.module_fqn,
+        )
+        code.writeline(f"with _graph_annotations.mark_kernels({self.module_fqn!r}):")
+        with code.indent():
+            for line in self.inner_lines:
+                if isinstance(line, WrapperLine):
+                    line.codegen(code)
+                else:
+                    code.writeline(line)
+
+    def codegen_fx(self, converter: FxConverter) -> FxConversionFunc:
+        raise NotImplementedError("extern kernel FX conversion not supported")
+
+
+@dataclasses.dataclass
 class KernelDefinitionLine(WrapperLine):
     wrapper: PythonWrapperCodegen
     kernel_name: str

@@ -1523,6 +1523,27 @@ class ExternKernelSchedulerNode(BaseSchedulerNode):
 
     def codegen(self, wrapper: PythonWrapperCodegen) -> None:
         assert isinstance(self.node, ir.ExternKernel)
+        if (
+            torch._inductor.config.triton.cudagraph_kernel_annotations
+            and not V.graph.cpp_wrapper
+        ):
+            from torch._inductor.codegen.wrapper import AnnotatedExternKernelBlock
+            from torch._inductor.fx_passes.graph_view import get_fused_kernel_module_fqn
+
+            module_fqn = get_fused_kernel_module_fqn([self])
+            log.debug(
+                "[fqn_trace] ExternKernelSchedulerNode.codegen: module_fqn=%s for %s",
+                module_fqn,
+                self.get_name(),
+            )
+            if module_fqn:
+                n_before = len(wrapper.lines)
+                self.node.codegen(wrapper)
+                inner_lines = wrapper.lines[n_before:]
+                wrapper.lines[n_before:] = [
+                    AnnotatedExternKernelBlock(inner_lines, module_fqn)
+                ]
+                return
         return self.node.codegen(wrapper)
 
 
