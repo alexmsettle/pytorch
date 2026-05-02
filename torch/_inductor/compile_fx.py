@@ -1152,19 +1152,6 @@ def _compile_fx_inner(
                 },
                 payload_fn=lambda: json.dumps(cache_info),
             )
-        if isinstance(compiled_graph, CompiledFxGraph):
-            log.debug(
-                "[fqn_trace] compile_fx_inner: CompiledFxGraph, "
-                "dynamo_flat_name_to_original_fqn in gm.meta=%s, value=%s",
-                "dynamo_flat_name_to_original_fqn" in gm.meta,
-                gm.meta.get("dynamo_flat_name_to_original_fqn", {}),
-            )
-            compiled_graph.repopulate_fqn_map(gm)
-        else:
-            log.debug(
-                "[fqn_trace] compile_fx_inner: compiled_graph type=%s, skipping repopulate_fqn_map",
-                type(compiled_graph).__name__,
-            )
         compiled_graph.post_compile(example_inputs, constants, graph_kwargs)
 
         policy = config.cudagraph_policy
@@ -1904,9 +1891,7 @@ def cudagraphify(
     constants: tuple[torch.Tensor, ...] = (),
     placeholders: Sequence[PlaceholderInfo] = (),
     mutated_input_idxs: tuple[int, ...] = (),
-    fqn_map: dict[str, str] | None = None,
 ) -> Callable[..., Any]:
-    log.debug("[fqn_trace] cudagraphify: fqn_map=%s", fqn_map)
     from torch._inductor.cudagraph_trees import (
         cudagraphify_impl as new_cudagraphify_impl,
     )
@@ -1923,7 +1908,6 @@ def cudagraphify(
             placeholders=placeholders,
             mutated_input_idxs=mutated_input_idxs,
             compile_id=torch._guards.CompileContext.current_compile_id(),
-            fqn_map=fqn_map or {},
         )
     else:
         cudagraphify_fn = cudagraphify_impl
@@ -2895,9 +2879,6 @@ def _compile_fx_main(
         ) -> OutputCode:
             with dynamo_utils.dynamo_timed("compile_fx.<locals>.fw_compiler_base"):
                 if isinstance(model_, GraphModule):
-                    fqn_map = model_.meta.get("dynamo_flat_name_to_original_fqn")
-                    if fqn_map is not None:
-                        gm.meta["dynamo_flat_name_to_original_fqn"] = fqn_map
                     num_orig_model_outputs = get_num_model_outputs(model_)
                 else:
                     num_orig_model_outputs = get_num_model_outputs(gm)
@@ -3007,11 +2988,6 @@ def _compile_fx_main(
                             node.meta["val"] = target
 
             unlifted_gm = _unlift_graph(model_, gm, graph_signature)
-            if "dynamo_flat_name_to_original_fqn" in model_.meta:
-                unlifted_gm.meta["dynamo_flat_name_to_original_fqn"] = model_.meta[
-                    "dynamo_flat_name_to_original_fqn"
-                ]
-
             if "dynamo_compile_id" in model_.meta:
                 unlifted_gm.meta["dynamo_compile_id"] = model_.meta["dynamo_compile_id"]
 
