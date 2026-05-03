@@ -140,63 +140,41 @@ def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
     Joins distinct names with " + ". Returns None if no nn_module_stack
     metadata is present.
     """
-    # First pass: collect module instance prefixes from snodes that have origin_node
-    # set. These define which module instances belong to this fused kernel and are
-    # used to filter get_origins() on snodes that lack origin_node, preventing
-    # cascaded history from earlier nodes in chained graphs from leaking in.
-    instance_prefixes: list[str] = []
-    for snode in scheduler_nodes:
-        if snode.node is None:
-            continue
-        direct_origin = snode.node.get_origin_node()
-        if direct_origin is not None:
-            stack = direct_origin.meta.get("nn_module_stack")
-            if stack:
-                module_path = _clean_stack_name(next(reversed(stack.values()))[0])
-                if module_path:
-                    instance_prefixes.append(module_path)
-
-    def _in_scope(path: str) -> bool:
-        if not instance_prefixes:
-            return True  # no anchor info — allow all (full fallback)
-        return any(
-            path == prefix or path.startswith(prefix + ".")
-            for prefix in instance_prefixes
-        )
-
-    # Second pass: collect FQN names, using instance_prefixes to filter origins.
+    # For each snode, find its primary FX node — the single FX graph node that
+    # directly corresponds to what this buffer computes.  Only emit an FQN entry
+    # for that node; never scan transitive origins, which accumulate history from
+    # all upstream ops via gather_origins and cause cascading annotations.
+    #
+    # Primary FX node resolution order:
+    #   1. origin_node — set by assign_origin_node during lowering (authoritative)
+    #   2. Buffer-name match in get_origins() — finds the FX node whose name
+    #      matches the IR buffer name (e.g. buffer "relu_3" → FX node "relu_3"),
+    #      recovering the direct correspondence without traversing the full chain.
+    #   3. No match — snode is skipped; no entry added for it.
     module_names: OrderedSet[str] = OrderedSet()
     for snode in scheduler_nodes:
         if snode.node is None:
             log.debug("[fqn_trace] get_fused_kernel_module_fqn: snode.node is None for %s", snode)
             continue
-        direct_origin = snode.node.get_origin_node()
+        primary_fx = snode.node.get_origin_node()
+        if primary_fx is None:
+            buf_name = getattr(snode.node, "name", None)
+            if buf_name:
+                primary_fx = next(
+                    (n for n in snode.node.get_origins() if n.name == buf_name),
+                    None,
+                )
         log.debug(
-            "[fqn_trace] get_fused_kernel_module_fqn: snode=%s direct_origin=%s",
+            "[fqn_trace] get_fused_kernel_module_fqn: snode=%s primary_fx=%s",
             snode,
-            direct_origin,
+            primary_fx,
         )
-        if direct_origin is not None:
-            stack = direct_origin.meta.get("nn_module_stack")
+        if primary_fx is not None:
+            stack = primary_fx.meta.get("nn_module_stack")
             if stack:
                 module_path = _clean_stack_name(next(reversed(stack.values()))[0])
                 if module_path:
-                    module_names.add(f"{module_path}.{_strip_instance_suffix(direct_origin.name)}")
-                    for fx_node in snode.node.get_origins():
-                        if fx_node is direct_origin:
-                            continue
-                        orig_stack = fx_node.meta.get("nn_module_stack")
-                        if orig_stack:
-                            orig_path = _clean_stack_name(next(reversed(orig_stack.values()))[0])
-                            if orig_path and _in_scope(orig_path):
-                                module_names.add(f"{orig_path}.{_strip_instance_suffix(fx_node.name)}")
-        else:
-            for fx_node in snode.node.get_origins():
-                stack = fx_node.meta.get("nn_module_stack")
-                if stack:
-                    module_path = _clean_stack_name(next(reversed(stack.values()))[0])
-                    if module_path and _in_scope(module_path):
-                        module_names.add(f"{module_path}.{_strip_instance_suffix(fx_node.name)}")
+                    module_names.add(f"{module_path}.{_strip_instance_suffix(primary_fx.name)}")
     result = " + ".join(module_names) if module_names else None
     log.debug("[fqn_trace] get_fused_kernel_module_fqn: result=%s", result)
     return result
