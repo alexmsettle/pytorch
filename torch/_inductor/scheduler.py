@@ -1531,6 +1531,7 @@ class ExternKernelSchedulerNode(BaseSchedulerNode):
             from torch._inductor.fx_passes.graph_view import (
                 _clean_stack_name,
                 _strip_instance_suffix,
+                get_fused_kernel_module_fqn,
             )
 
             module_fqn = None
@@ -1542,6 +1543,12 @@ class ExternKernelSchedulerNode(BaseSchedulerNode):
                     if module_path:
                         op_name = _strip_instance_suffix(origin_node.name)
                         module_fqn = f"{module_path}.{op_name}"
+            else:
+                # origin_node not set for this extern kernel (e.g. convolution);
+                # fall back to walking origins. For ops whose inputs are weights
+                # or placeholders (no nn_module_stack), this produces a clean
+                # single-FQN result without cascading upstream names.
+                module_fqn = get_fused_kernel_module_fqn([self])
             log.debug(
                 "[fqn_trace] ExternKernelSchedulerNode.codegen: module_fqn=%s for %s",
                 module_fqn,
