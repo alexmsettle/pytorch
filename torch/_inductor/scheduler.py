@@ -1528,9 +1528,20 @@ class ExternKernelSchedulerNode(BaseSchedulerNode):
             and not V.graph.cpp_wrapper
         ):
             from torch._inductor.codegen.wrapper import AnnotatedExternKernelBlock
-            from torch._inductor.fx_passes.graph_view import get_fused_kernel_module_fqn
+            from torch._inductor.fx_passes.graph_view import (
+                _clean_stack_name,
+                _strip_instance_suffix,
+            )
 
-            module_fqn = get_fused_kernel_module_fqn([self])
+            module_fqn = None
+            origin_node = self.node.origin_node
+            if origin_node is not None:
+                stack = origin_node.meta.get("nn_module_stack")
+                if stack:
+                    module_path = _clean_stack_name(next(reversed(stack.values()))[0])
+                    if module_path:
+                        op_name = _strip_instance_suffix(origin_node.name)
+                        module_fqn = f"{module_path}.{op_name}"
             log.debug(
                 "[fqn_trace] ExternKernelSchedulerNode.codegen: module_fqn=%s for %s",
                 module_fqn,
