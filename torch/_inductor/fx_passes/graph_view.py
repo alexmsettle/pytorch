@@ -125,10 +125,18 @@ def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
     """
     Return a human-readable FQN annotation for a fused kernel.
 
-    For each origin FX node, builds a name of the form
-    '<root_class>.<module_path>.<op_name>' using the root module class name
-    (resolved by scanning the FX graph), the innermost nn_module_stack entry,
-    and the FX node name (stripped of its _N uniqueness suffix).
+    For each scheduler node, prefers origin_node (the single primary FX node
+    assigned by assign_origin_node during lowering) over the full origins set.
+    The full origins set accumulates transitively via gather_origins — when
+    lowering op B that consumes unrealized output of op A, gather_origins
+    propagates A's origins into B's origins set, causing cascading annotations
+    across layer boundaries.  origin_node is the direct FX node for each IR
+    node and does not inherit upstream origins.
+
+    Falls back to the full origins set for nodes where origin_node is not set.
+
+    Builds names of the form '<module_path>.<op_name>' using the innermost
+    nn_module_stack entry and the FX node name (stripped of its _N suffix).
     Joins distinct names with " + ". Returns None if no nn_module_stack
     metadata is present.
     """
@@ -137,21 +145,16 @@ def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
         if snode.node is None:
             log.debug("[fqn_trace] get_fused_kernel_module_fqn: snode.node is None for %s", snode)
             continue
-        origins = snode.node.get_origins()
+        # Use origin_node (direct FX node) to avoid cascading transitive origins.
+        # Fall back to get_origins() if origin_node is not set.
+        direct_origin = snode.node.get_origin_node()
+        fx_nodes: list[Any] = [direct_origin] if direct_origin is not None else list(snode.node.get_origins())
         log.debug(
-            "[fqn_trace] get_fused_kernel_module_fqn: snode=%s origins=%s",
+            "[fqn_trace] get_fused_kernel_module_fqn: snode=%s direct_origin=%s",
             snode,
-            [
-                (
-                    n.name,
-                    f"{_clean_stack_name(next(reversed(s.values()))[0])}.{_strip_instance_suffix(n.name)}"
-                    if (s := n.meta.get("nn_module_stack"))
-                    else None,
-                )
-                for n in origins
-            ],
+            direct_origin,
         )
-        for fx_node in origins:
+        for fx_node in fx_nodes:
             stack = fx_node.meta.get("nn_module_stack")
             if stack:
                 module_path = _clean_stack_name(next(reversed(stack.values()))[0])
