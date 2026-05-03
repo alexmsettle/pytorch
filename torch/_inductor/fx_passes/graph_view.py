@@ -140,6 +140,31 @@ def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
     Joins distinct names with " + ". Returns None if no nn_module_stack
     metadata is present.
     """
+    # First pass: collect module instance prefixes from snodes that have origin_node
+    # set. These define which module instances belong to this fused kernel and are
+    # used to filter get_origins() on snodes that lack origin_node, preventing
+    # cascaded history from earlier nodes in chained graphs from leaking in.
+    instance_prefixes: list[str] = []
+    for snode in scheduler_nodes:
+        if snode.node is None:
+            continue
+        direct_origin = snode.node.get_origin_node()
+        if direct_origin is not None:
+            stack = direct_origin.meta.get("nn_module_stack")
+            if stack:
+                module_path = _clean_stack_name(next(reversed(stack.values()))[0])
+                if module_path:
+                    instance_prefixes.append(module_path)
+
+    def _in_scope(path: str) -> bool:
+        if not instance_prefixes:
+            return True  # no anchor info — allow all (full fallback)
+        return any(
+            path == prefix or path.startswith(prefix + ".")
+            for prefix in instance_prefixes
+        )
+
+    # Second pass: collect FQN names, using instance_prefixes to filter origins.
     module_names: OrderedSet[str] = OrderedSet()
     for snode in scheduler_nodes:
         if snode.node is None:
@@ -157,28 +182,20 @@ def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
                 module_path = _clean_stack_name(next(reversed(stack.values()))[0])
                 if module_path:
                     module_names.add(f"{module_path}.{_strip_instance_suffix(direct_origin.name)}")
-                    # Filter get_origins() to only ops within the same module instance
-                    # (same module_path or a submodule of it), excluding cascaded history
-                    # from earlier scheduler nodes in chained graphs.
-                    instance_prefix = module_path + "."
                     for fx_node in snode.node.get_origins():
                         if fx_node is direct_origin:
                             continue
                         orig_stack = fx_node.meta.get("nn_module_stack")
                         if orig_stack:
                             orig_path = _clean_stack_name(next(reversed(orig_stack.values()))[0])
-                            if orig_path and (
-                                orig_path == module_path
-                                or orig_path.startswith(instance_prefix)
-                            ):
+                            if orig_path and _in_scope(orig_path):
                                 module_names.add(f"{orig_path}.{_strip_instance_suffix(fx_node.name)}")
         else:
-            # origin_node not set; fall back to all origins
             for fx_node in snode.node.get_origins():
                 stack = fx_node.meta.get("nn_module_stack")
                 if stack:
                     module_path = _clean_stack_name(next(reversed(stack.values()))[0])
-                    if module_path:
+                    if module_path and _in_scope(module_path):
                         module_names.add(f"{module_path}.{_strip_instance_suffix(fx_node.name)}")
     result = " + ".join(module_names) if module_names else None
     log.debug("[fqn_trace] get_fused_kernel_module_fqn: result=%s", result)
