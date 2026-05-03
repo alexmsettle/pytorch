@@ -404,6 +404,79 @@ def clear_kernel_annotations() -> None:
     _capture_graph = None
 
 
+def register_fqn_annotation_hooks(
+    model: "torch.nn.Module",
+) -> list[Any]:
+    """Register forward hooks that annotate CUDA graph kernels with module FQNs.
+
+    For use with standalone CUDA graphs (without Inductor).  Each module's
+    forward pass is wrapped with ``mark_kernels(fqn)`` during graph capture so
+    that kernel nodes are annotated with their layer name.  Nested modules
+    produce overlapping scopes; ``resolve_pending_annotations`` picks the
+    innermost annotation for each kernel node.
+
+    The FQN format matches the Inductor convention: ``L.<module_path>`` where
+    the root module is ``L`` and submodules use dotted paths, e.g.
+    ``L.networks.0.conv``.
+
+    Must be called before ``torch.cuda.graph()`` capture.  Remove the returned
+    handles after capture to avoid overhead during replay.
+
+    Args:
+        model: The ``nn.Module`` to annotate.
+
+    Returns:
+        List of ``RemovableHook`` handles.  Call ``h.remove()`` on each after
+        capture is complete.
+
+    Example::
+
+        from torch.cuda._graph_annotations import (
+            enable_annotations,
+            register_fqn_annotation_hooks,
+            remap_to_exec_graph,
+            clear_kernel_annotations,
+        )
+
+        clear_kernel_annotations()
+        enable_annotations()
+        handles = register_fqn_annotation_hooks(model)
+
+        g = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(g, enable_annotations=True):
+            output = model(x)
+
+        for h in handles:
+            h.remove()
+
+        remap_to_exec_graph(g)
+    """
+    from collections import defaultdict
+
+    handles: list[Any] = []
+    # Stack per module to handle re-entrant calls (e.g. same module used twice).
+    active_cms: dict[int, list[Any]] = defaultdict(list)
+
+    for name, module in model.named_modules():
+        fqn = f"L.{name}" if name else "L"
+
+        def pre_hook(mod: Any, _input: Any, fqn: str = fqn) -> None:
+            cm = mark_kernels(fqn)
+            active_cms[id(mod)].append(cm)
+            cm.__enter__()
+
+        def post_hook(mod: Any, _input: Any, _output: Any) -> None:
+            stack = active_cms.get(id(mod))
+            if stack:
+                cm = stack.pop()
+                cm.__exit__(None, None, None)
+
+        handles.append(module.register_forward_pre_hook(pre_hook))
+        handles.append(module.register_forward_hook(post_hook))
+
+    return handles
+
+
 # Counter-based stream ID registry. IDs start at 60 (above the highest
 # observed non-graphed CUDA stream ID) so every assigned lane is visually
 # distinct in Perfetto and doesn't collide with real streams.
