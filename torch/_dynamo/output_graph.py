@@ -3767,9 +3767,21 @@ class SubgraphTracer(fx.Tracer):
         nn_module_stack = tx.nn_module_stack
         if nn_module_stack:
             rv.node.meta["nn_module_stack"] = nn_module_stack.copy()
+            # Verify: at assignment time we have both node.name and the full
+            # stack, so we can derive the unambiguous FQN mapping here.
+            # Uses same cleaning logic as graph_view._clean_stack_name.
+            _raw = list(nn_module_stack.values())[-1][0]
+            _cleaned = re.sub(r"^L\['self'\]\.?", "", _raw)
+            _parts = re.findall(r"\['([^']+)'\]", _cleaned)
+            _suffix = ".".join(_parts) if _parts else _cleaned
+            _innermost_clean = f"L.{_suffix}" if _suffix else "L"
+            _stripped_name = re.sub(r"_\d+$", "", rv.node.name)
+            _derived_fqn = f"{_innermost_clean}.{_stripped_name}"
             log.debug(
-                "[fqn_trace] nn_module_stack assigned: node=%s stack=%s",
+                "[fqn_trace] nn_module_stack assigned: node=%s "
+                "derived_fqn=%s stack=%s",
                 rv.node.name,
+                _derived_fqn,
                 {k: v for k, v in nn_module_stack.items()},
             )
 
