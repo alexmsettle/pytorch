@@ -1816,6 +1816,15 @@ class GraphLowering(torch.fx.Interpreter):
             args, kwargs = self.fetch_args_kwargs_from_env(n)
             origins |= gather_origins(args, kwargs)
             self._realize_inputs_at_stream_boundaries(n)
+        log.debug(
+            "[fqn_trace] run_node: n=%s op=%s origins=[%s]",
+            n.name,
+            n.op,
+            ", ".join(
+                f"{o.name}:{list(o.meta['nn_module_stack'].values()) if o.meta.get('nn_module_stack') else 'no_stack'}"
+                for o in origins
+            ),
+        )
         with (
             ir.IRNode.current_origins(origins),
             ir.IRNode.current_primary_node(n),
