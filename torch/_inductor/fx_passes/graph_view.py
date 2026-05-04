@@ -237,19 +237,18 @@ def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
                     snode, buf_name, fx_node.name,
                 )
                 continue
-            # Extract block-level prefix from fqn for filtering.
-            stack = fx_node.meta.get("nn_module_stack")
-            outer = _outermost_prefix(stack) if stack else None
-            if outer not in anchor_prefixes:
+            # Filter by block-level prefix: include only FQNs whose path
+            # starts with one of the anchor prefixes (e.g. "L.networks.3").
+            if not any(fqn == p or fqn.startswith(p + ".") for p in anchor_prefixes):
                 log.debug(
                     "[fqn_trace] snode=%s buf_name=%s fx_node=%s fqn=%s "
-                    "outermost=%s excluded (not in anchors)",
-                    snode, buf_name, fx_node.name, fqn, outer,
+                    "excluded (prefix not in anchors=%s)",
+                    snode, buf_name, fx_node.name, fqn, list(anchor_prefixes),
                 )
                 continue
             log.debug(
-                "[fqn_trace] snode=%s buf_name=%s fx_node=%s fqn=%s outermost=%s included",
-                snode, buf_name, fx_node.name, fqn, outer,
+                "[fqn_trace] snode=%s buf_name=%s fx_node=%s fqn=%s included",
+                snode, buf_name, fx_node.name, fqn,
             )
             module_names.add(fqn)
 

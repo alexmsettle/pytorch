@@ -139,6 +139,7 @@ if TYPE_CHECKING:
     CompiledModule = ModuleType | FileBackedGraphModule
 
 from torch._inductor.codecache import output_code_log
+from torch._inductor.fx_passes.graph_view import _clean_stack_name, _strip_instance_suffix
 
 
 log = logging.getLogger(__name__)
@@ -1835,12 +1836,8 @@ class GraphLowering(torch.fx.Interpreter):
         # time lowering finishes.
         _stack = n.meta.get("nn_module_stack")
         if _stack:
-            _raw = list(_stack.values())[-1][0]
-            _cleaned = re.sub(r"^L\['self'\]\.?", "", _raw)
-            _parts = re.findall(r"\['([^']+)'\]", _cleaned)
-            _suffix = ".".join(_parts) if _parts else _cleaned
-            _innermost = f"L.{_suffix}" if _suffix else "L"
-            self.fx_fqn_map[n.name] = f"{_innermost}.{re.sub(r'_[0-9]+$', '', n.name)}"
+            _innermost = _clean_stack_name(list(_stack.values())[-1][0])
+            self.fx_fqn_map[n.name] = f"{_innermost}.{_strip_instance_suffix(n.name)}"
             log.debug(
                 "[fqn_trace] run_node: n=%s fx_fqn_map entry: %s -> %s",
                 n.name,
