@@ -121,56 +121,86 @@ def _strip_instance_suffix(name: str) -> str:
     return re.sub(r"_\d+$", "", name)
 
 
+def _outermost_prefix(stack: Any) -> str:
+    """Return the cleaned outermost (network-block-level) module path from an nn_module_stack."""
+    return _clean_stack_name(next(iter(stack.values()))[0])
+
+
 def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
     """
     Return a human-readable FQN annotation for a fused kernel.
 
-    Uses origin_node on each scheduler node's IRNode.  origin_node is the
-    single FX node that was being lowered when the IR buffer was created,
-    set via IRNode._current_primary_node in graph.py:run_node.  Unlike the
-    full origins set (which accumulates transitively via gather_origins),
-    origin_node does not inherit upstream history and stays specific to the
-    FX op that produced each buffer.
+    Uses a two-pass approach to avoid including cascaded upstream history from
+    previous network blocks:
 
-    StorageBox.realize() propagates origin_node from the inner Pointwise to
-    the new ComputedBuffer, so inline realization during a different op's
-    run_node does not corrupt the tag.
+    Pass 1 — anchor prefixes: collect the outermost nn_module_stack path
+    (e.g. "L.networks.1") from each snode's origin_node.  These define which
+    network block(s) this fused kernel belongs to.  For snodes whose
+    origin_node is a placeholder (no nn_module_stack), fall back to the first
+    origins entry that has a stack.
 
-    Builds names of the form '<module_path>.<op_name>' using the innermost
-    nn_module_stack entry and the FX node name (stripped of its _N suffix).
-    Joins distinct names with " + ". Returns None if no nn_module_stack
-    metadata is present.
+    Pass 2 — filter origins: for each snode, walk origins and include only FX
+    nodes whose outermost prefix is in the anchor set.  Build names as
+    '<innermost_module_path>.<aten_op_name>' — e.g.
+    "L.networks.3.conv.convolution" or "L.networks.3.mul".  The module path
+    makes the FX instance-number suffix redundant (no need for
+    "convolution_3"); the suffix would only be needed if the same ATen op
+    appeared more than once under an identical module path.
+
+    This correctly handles:
+    - Single-buffer fused kernels where add/relu/conv are inlined into mul's
+      Pointwise (all share one scheduler node whose origins contain all ops)
+    - Boundary-crossing kernels that span two adjacent network blocks
+    - Placeholder-origin prep kernels (weight broadcast / bias reshape buffers)
     """
+    # Pass 1: collect anchor prefixes from origin_node (or first origins entry).
+    anchor_prefixes: OrderedSet[str] = OrderedSet()
+    for snode in scheduler_nodes:
+        if snode.node is None:
+            continue
+        origin = snode.node.get_origin_node()
+        if origin is not None:
+            stack = origin.meta.get("nn_module_stack")
+            if stack:
+                prefix = _outermost_prefix(stack)
+                if prefix:
+                    anchor_prefixes.add(prefix)
+                continue
+        # origin_node absent or has no stack (placeholder) — use first origins entry.
+        for fx_node in snode.node.origins:
+            stack = fx_node.meta.get("nn_module_stack")
+            if stack:
+                prefix = _outermost_prefix(stack)
+                if prefix:
+                    anchor_prefixes.add(prefix)
+                break
+
+    log.debug("[fqn_trace] get_fused_kernel_module_fqn: anchor_prefixes=%s", list(anchor_prefixes))
+
+    if not anchor_prefixes:
+        log.debug("[fqn_trace] get_fused_kernel_module_fqn: result=None (no anchors)")
+        return None
+
+    # Pass 2: filter origins to nodes whose outermost prefix is an anchor.
     module_names: OrderedSet[str] = OrderedSet()
     for snode in scheduler_nodes:
         if snode.node is None:
-            log.debug("[fqn_trace] get_fused_kernel_module_fqn: snode.node is None for %s", snode)
             continue
-        origin = snode.node.get_origin_node()
-        # Diagnostic: dump full snode state to understand what data is available
-        # before any name-matching logic is applied.
-        origins_info = [
-            (fx_node.name, bool(fx_node.meta.get("nn_module_stack")))
-            for fx_node in snode.node.origins
-        ]
-        log.debug(
-            "[fqn_trace] snode=%s buf_name=%s origin_node=%s has_nn_module_stack=%s "
-            "origins_count=%d origins_with_stack=%d origins_names=%s",
-            snode,
-            getattr(snode.node, "name", None),
-            origin.name if origin is not None else None,
-            origin.meta.get("nn_module_stack") is not None if origin is not None else None,
-            len(origins_info),
-            sum(1 for _, has_stack in origins_info if has_stack),
-            [name for name, _ in origins_info],
-        )
-        if origin is None:
-            continue
-        stack = origin.meta.get("nn_module_stack")
-        if stack:
-            module_path = _clean_stack_name(next(reversed(stack.values()))[0])
-            if module_path:
-                module_names.add(f"{module_path}.{_strip_instance_suffix(origin.name)}")
+        for fx_node in snode.node.origins:
+            stack = fx_node.meta.get("nn_module_stack")
+            if not stack:
+                continue
+            if _outermost_prefix(stack) not in anchor_prefixes:
+                continue
+            # Use innermost module path + stripped ATen op name as the FQN.
+            # The module path makes the instance-number suffix redundant:
+            # "L.networks.3.conv.convolution" is unique without needing
+            # "convolution_3".  The suffix is only needed when the same ATen
+            # op appears more than once under an identical module path.
+            innermost = _clean_stack_name(next(reversed(stack.values()))[0])
+            if innermost:
+                module_names.add(f"{innermost}.{_strip_instance_suffix(fx_node.name)}")
+
     result = " + ".join(module_names) if module_names else None
     log.debug("[fqn_trace] get_fused_kernel_module_fqn: result=%s", result)
     return result

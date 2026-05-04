@@ -15,7 +15,13 @@ The FQN flows from FX graph metadata all the way to the generated Python wrapper
 
 ### Stage 1 — FQN extraction (`graph_view.py:get_fused_kernel_module_fqn`)
 
-Called with a list of `SchedulerNode`s. For each node reads `snode.node.get_origin_node()` (set via `IRNode._current_primary_node` during `graph.py:run_node`), reads `node.meta["nn_module_stack"]`, applies `_clean_stack_name` to the innermost entry, and joins unique names with `" + "`.
+Two-pass algorithm to avoid including cascaded upstream history:
+
+**Pass 1 — anchor prefixes:** From each snode's `origin_node`, extract the outermost (first) `nn_module_stack` path (e.g. `L.networks.1`) — this is the network-block-level prefix that identifies which block(s) the fused kernel belongs to. For snodes whose `origin_node` is a placeholder (no `nn_module_stack`), fall back to the first `origins` entry that has a stack.
+
+**Pass 2 — filter origins:** Walk all `origins` across all snodes. Include only FX nodes whose outermost `nn_module_stack` path is in the anchor set. Build names as `{innermost_module_path}.{stripped_aten_op_name}` — e.g. `L.networks.3.conv.convolution`, `L.networks.3.mul`. The module path makes the FX instance-number suffix redundant (no need for `convolution_3`); the `_N` suffix would only be needed if the same ATen op appeared more than once under the identical module path. Unique names joined with `" + "`.
+
+Key: `origins` for fused kernels accumulates ALL upstream FX nodes transitively. The outermost-prefix filter isolates the current block's ops and discards history from previous blocks.
 
 Log lines:
 ```
