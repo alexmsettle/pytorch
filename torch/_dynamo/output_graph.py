@@ -3777,12 +3777,18 @@ class SubgraphTracer(fx.Tracer):
             _innermost_clean = f"L.{_suffix}" if _suffix else "L"
             _stripped_name = re.sub(r"_\d+$", "", rv.node.name)
             _derived_fqn = f"{_innermost_clean}.{_stripped_name}"
+            _stack_entries = list(nn_module_stack.values())
             log.debug(
-                "[fqn_trace] nn_module_stack assigned: node=%s "
-                "derived_fqn=%s stack=%s",
+                "[fqn_trace] nn_module_stack assigned: node=%s derived_fqn=%s\n"
+                "  full stack (%d entries, outermost->innermost):\n%s",
                 rv.node.name,
                 _derived_fqn,
-                {k: v for k, v in nn_module_stack.items()},
+                len(_stack_entries),
+                "\n".join(
+                    f"  {'[outermost]' if i == 0 else '[innermost]' if i == len(_stack_entries) - 1 else '          '} "
+                    f"[{i}] path={entry[0]!r} class={entry[1].__name__}"
+                    for i, entry in enumerate(_stack_entries)
+                ),
             )
 
         if kind in {"call_function", "call_method"}:

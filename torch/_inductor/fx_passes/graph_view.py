@@ -126,6 +126,16 @@ def _outermost_prefix(stack: Any) -> str:
     return _clean_stack_name(next(iter(stack.values()))[0])
 
 
+def _format_stack(stack: Any) -> str:
+    """Format nn_module_stack as an ordered list with outermost/innermost labels for logging."""
+    entries = list(stack.values())
+    lines = []
+    for i, (path, klass) in enumerate(entries):
+        label = "[outermost]" if i == 0 else "[innermost]" if i == len(entries) - 1 else "          "
+        lines.append(f"  {label} [{i}] path={path!r} class={klass.__name__}")
+    return "\n" + "\n".join(lines)
+
+
 def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
     """
     Return a human-readable FQN annotation for a fused kernel.
@@ -171,14 +181,14 @@ def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
                     "[fqn_trace] snode=%s buf_name=%s origin_node=%s "
                     "buf_matches_origin=%s%s "
                     "has_nn_module_stack=True outermost_prefix=%s "
-                    "nn_module_stack=%s origins_names=%s",
+                    "nn_module_stack=%s\n  origins_names=%s",
                     snode,
                     buf_name,
                     origin_name,
                     name_match,
                     "" if name_match else f" (counter-named: buf_name={buf_name!r} != origin={origin_name!r})",
                     prefix,
-                    {k: v for k, v in stack.items()},
+                    _format_stack(stack),
                     origins_names,
                 )
                 if prefix:
@@ -194,13 +204,13 @@ def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
                 log.debug(
                     "[fqn_trace] snode=%s buf_name=%s origin_node=%s "
                     "has_nn_module_stack=False fallback_origin=%s outermost_prefix=%s "
-                    "nn_module_stack=%s origins_names=%s",
+                    "nn_module_stack=%s\n  origins_names=%s",
                     snode,
                     buf_name,
                     origin_name,
                     fallback_name,
                     prefix,
-                    {k: v for k, v in stack.items()},
+                    _format_stack(stack),
                     origins_names,
                 )
                 if prefix:
