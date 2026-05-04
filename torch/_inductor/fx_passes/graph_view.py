@@ -209,6 +209,7 @@ def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
     for snode in scheduler_nodes:
         if snode.node is None:
             continue
+        buf_name = getattr(snode.node, "name", None)
         for fx_node in snode.node.origins:
             stack = fx_node.meta.get("nn_module_stack")
             if not stack:
@@ -216,8 +217,9 @@ def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
             outer = _outermost_prefix(stack)
             if outer not in anchor_prefixes:
                 log.debug(
-                    "[fqn_trace] snode=%s fx_node=%s outermost=%s excluded (not in anchors)",
+                    "[fqn_trace] snode=%s buf_name=%s fx_node=%s outermost=%s excluded (not in anchors)",
                     snode,
+                    buf_name,
                     fx_node.name,
                     outer,
                 )
@@ -231,8 +233,9 @@ def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
             if innermost:
                 name = f"{innermost}.{_strip_instance_suffix(fx_node.name)}"
                 log.debug(
-                    "[fqn_trace] snode=%s fx_node=%s outermost=%s innermost=%s -> %s",
+                    "[fqn_trace] snode=%s buf_name=%s fx_node=%s outermost=%s innermost=%s -> %s",
                     snode,
+                    buf_name,
                     fx_node.name,
                     outer,
                     innermost,
