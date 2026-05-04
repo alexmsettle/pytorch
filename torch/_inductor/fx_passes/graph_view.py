@@ -122,135 +122,50 @@ def _strip_instance_suffix(name: str) -> str:
     return re.sub(r"_\d+$", "", name)
 
 
-def _outermost_prefix(stack: Any) -> str:
-    """Return the cleaned outermost (network-block-level) module path from an nn_module_stack."""
-    return _clean_stack_name(next(iter(stack.values()))[0])
-
-
-def _format_stack(stack: Any) -> str:
-    """Format nn_module_stack as an ordered list with outermost/innermost labels for logging."""
-    entries = list(stack.values())
-    lines = []
-    for i, (path, klass) in enumerate(entries):
-        label = "[outermost]" if i == 0 else "[innermost]" if i == len(entries) - 1 else "          "
-        lines.append(f"  {label} [{i}] path={path!r} class={klass.__name__}")
-    return "\n" + "\n".join(lines)
-
-
 def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
     """
     Return a human-readable FQN annotation for a fused kernel.
 
     Uses V.graph.fx_fqn_map — built during lowering in graph.py:run_node —
-    to map each origin's FX node name directly to its FQN string, e.g.
+    to map each snode's origin_node directly to its FQN string, e.g.
     "convolution_1" -> "L.networks.1.conv.convolution".
 
-    Pass 1 — anchor prefixes: collect the module-block-level prefix from
-    each snode's origin_node FQN (e.g. "L.networks.1").  For snodes whose
-    origin_node has no FQN (placeholders), fall back to the first origin
-    in the map.  Anchors define which block(s) this fused kernel belongs to.
-
-    Pass 2 — filter and collect: for each origin across all snodes, look up
-    its FQN in the map.  Include it only if its prefix is in the anchor set.
-    Excluded origins are cascaded history from upstream blocks.
+    origin_node is the direct FX node whose run_node call created the IR
+    buffer — it is never transitively accumulated, so there is no cascading
+    history to filter out.  One FQN lookup per snode is sufficient.
     """
     fqn_map: dict[str, str] = getattr(V.graph, "fx_fqn_map", {})
 
-    # Pass 1: collect anchor prefixes from each snode's origin_node FQN.
-    anchor_prefixes: OrderedSet[str] = OrderedSet()
-    for snode in scheduler_nodes:
-        if snode.node is None:
-            continue
-        origin = snode.node.get_origin_node()
-        origin_name = origin.name if origin is not None else None
-        origins_names = [o.name for o in snode.node.origins]
-        buf_name = getattr(snode.node, "name", None)
-
-        anchor_fqn = fqn_map.get(origin_name) if origin_name else None
-        if anchor_fqn:
-            # Prefix is everything up to the last dot-separated op component.
-            # e.g. "L.networks.1.conv.convolution" -> "L.networks.1.conv"
-            # but we want the block-level prefix "L.networks.1", which is
-            # the FQN of the origin_node's outermost stack entry.
-            # Derive it from the origin's nn_module_stack directly.
-            stack = origin.meta.get("nn_module_stack") if origin is not None else None
-            prefix = _outermost_prefix(stack) if stack else None
-            name_match = buf_name == origin_name
-            log.debug(
-                "[fqn_trace] snode=%s buf_name=%s origin_node=%s "
-                "buf_matches_origin=%s%s fqn=%s anchor_prefix=%s\n"
-                "  nn_module_stack=%s\n  origins_names=%s",
-                snode,
-                buf_name,
-                origin_name,
-                name_match,
-                "" if name_match else f" (counter-named: buf_name={buf_name!r} != origin={origin_name!r})",
-                anchor_fqn,
-                prefix,
-                _format_stack(stack) if stack else "no_stack",
-                origins_names,
-            )
-            if prefix:
-                anchor_prefixes.add(prefix)
-            continue
-
-        # origin_node absent or not in map (placeholder) — use first mapped origin.
-        for fx_node in snode.node.origins:
-            fallback_fqn = fqn_map.get(fx_node.name)
-            if fallback_fqn:
-                stack = fx_node.meta.get("nn_module_stack")
-                prefix = _outermost_prefix(stack) if stack else None
-                log.debug(
-                    "[fqn_trace] snode=%s buf_name=%s origin_node=%s "
-                    "no_map_entry fallback_origin=%s fqn=%s anchor_prefix=%s\n"
-                    "  nn_module_stack=%s\n  origins_names=%s",
-                    snode,
-                    buf_name,
-                    origin_name,
-                    fx_node.name,
-                    fallback_fqn,
-                    prefix,
-                    _format_stack(stack) if stack else "no_stack",
-                    origins_names,
-                )
-                if prefix:
-                    anchor_prefixes.add(prefix)
-                break
-
-    log.debug("[fqn_trace] get_fused_kernel_module_fqn: anchor_prefixes=%s", list(anchor_prefixes))
-
-    if not anchor_prefixes:
-        log.debug("[fqn_trace] get_fused_kernel_module_fqn: result=None (no anchors)")
-        return None
-
-    # Pass 2: collect FQNs for origins whose block prefix is in the anchor set.
     module_names: OrderedSet[str] = OrderedSet()
     for snode in scheduler_nodes:
         if snode.node is None:
             continue
         buf_name = getattr(snode.node, "name", None)
-        for fx_node in snode.node.origins:
-            fqn = fqn_map.get(fx_node.name)
-            if not fqn:
-                log.debug(
-                    "[fqn_trace] snode=%s buf_name=%s fx_node=%s skipped (not in fqn_map)",
-                    snode, buf_name, fx_node.name,
-                )
-                continue
-            # Filter by block-level prefix: include only FQNs whose path
-            # starts with one of the anchor prefixes (e.g. "L.networks.3").
-            if not any(fqn == p or fqn.startswith(p + ".") for p in anchor_prefixes):
-                log.debug(
-                    "[fqn_trace] snode=%s buf_name=%s fx_node=%s fqn=%s "
-                    "excluded (prefix not in anchors=%s)",
-                    snode, buf_name, fx_node.name, fqn, list(anchor_prefixes),
-                )
-                continue
+        origin = snode.node.get_origin_node()
+        if origin is None:
             log.debug(
-                "[fqn_trace] snode=%s buf_name=%s fx_node=%s fqn=%s included",
-                snode, buf_name, fx_node.name, fqn,
+                "[fqn_trace] snode=%s buf_name=%s skipped (no origin_node)",
+                snode,
+                buf_name,
+            )
+            continue
+        fqn = fqn_map.get(origin.name)
+        if fqn:
+            log.debug(
+                "[fqn_trace] snode=%s buf_name=%s origin_node=%s fqn=%s",
+                snode,
+                buf_name,
+                origin.name,
+                fqn,
             )
             module_names.add(fqn)
+        else:
+            log.debug(
+                "[fqn_trace] snode=%s buf_name=%s origin_node=%s skipped (not in fqn_map)",
+                snode,
+                buf_name,
+                origin.name,
+            )
 
     result = " + ".join(module_names) if module_names else None
     log.debug("[fqn_trace] get_fused_kernel_module_fqn: result=%s", result)
