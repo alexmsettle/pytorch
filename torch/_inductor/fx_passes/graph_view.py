@@ -159,18 +159,41 @@ def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
         if snode.node is None:
             continue
         origin = snode.node.get_origin_node()
+        origin_name = origin.name if origin is not None else None
+        origins_names = [o.name for o in snode.node.origins]
         if origin is not None:
             stack = origin.meta.get("nn_module_stack")
             if stack:
                 prefix = _outermost_prefix(stack)
+                log.debug(
+                    "[fqn_trace] snode=%s buf_name=%s origin_node=%s "
+                    "has_nn_module_stack=True outermost_prefix=%s origins_names=%s",
+                    snode,
+                    getattr(snode.node, "name", None),
+                    origin_name,
+                    prefix,
+                    origins_names,
+                )
                 if prefix:
                     anchor_prefixes.add(prefix)
                 continue
         # origin_node absent or has no stack (placeholder) — use first origins entry.
+        fallback_name = None
         for fx_node in snode.node.origins:
             stack = fx_node.meta.get("nn_module_stack")
             if stack:
                 prefix = _outermost_prefix(stack)
+                fallback_name = fx_node.name
+                log.debug(
+                    "[fqn_trace] snode=%s buf_name=%s origin_node=%s "
+                    "has_nn_module_stack=False fallback_origin=%s outermost_prefix=%s origins_names=%s",
+                    snode,
+                    getattr(snode.node, "name", None),
+                    origin_name,
+                    fallback_name,
+                    prefix,
+                    origins_names,
+                )
                 if prefix:
                     anchor_prefixes.add(prefix)
                 break
@@ -190,7 +213,14 @@ def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
             stack = fx_node.meta.get("nn_module_stack")
             if not stack:
                 continue
-            if _outermost_prefix(stack) not in anchor_prefixes:
+            outer = _outermost_prefix(stack)
+            if outer not in anchor_prefixes:
+                log.debug(
+                    "[fqn_trace] snode=%s fx_node=%s outermost=%s excluded (not in anchors)",
+                    snode,
+                    fx_node.name,
+                    outer,
+                )
                 continue
             # Use innermost module path + stripped ATen op name as the FQN.
             # The module path makes the instance-number suffix redundant:
@@ -199,7 +229,16 @@ def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
             # op appears more than once under an identical module path.
             innermost = _clean_stack_name(next(reversed(stack.values()))[0])
             if innermost:
-                module_names.add(f"{innermost}.{_strip_instance_suffix(fx_node.name)}")
+                name = f"{innermost}.{_strip_instance_suffix(fx_node.name)}"
+                log.debug(
+                    "[fqn_trace] snode=%s fx_node=%s outermost=%s innermost=%s -> %s",
+                    snode,
+                    fx_node.name,
+                    outer,
+                    innermost,
+                    name,
+                )
+                module_names.add(name)
 
     result = " + ".join(module_names) if module_names else None
     log.debug("[fqn_trace] get_fused_kernel_module_fqn: result=%s", result)
