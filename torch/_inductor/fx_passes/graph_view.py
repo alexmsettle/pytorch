@@ -147,10 +147,22 @@ def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
             log.debug("[fqn_trace] get_fused_kernel_module_fqn: snode.node is None for %s", snode)
             continue
         origin = snode.node.get_origin_node()
+        # Diagnostic: dump full snode state to understand what data is available
+        # before any name-matching logic is applied.
+        origins_info = [
+            (fx_node.name, bool(fx_node.meta.get("nn_module_stack")))
+            for fx_node in snode.node.origins
+        ]
         log.debug(
-            "[fqn_trace] get_fused_kernel_module_fqn: snode=%s origin_node=%s",
+            "[fqn_trace] snode=%s buf_name=%s origin_node=%s has_nn_module_stack=%s "
+            "origins_count=%d origins_with_stack=%d origins_names=%s",
             snode,
-            origin,
+            getattr(snode.node, "name", None),
+            origin.name if origin is not None else None,
+            origin.meta.get("nn_module_stack") is not None if origin is not None else None,
+            len(origins_info),
+            sum(1 for _, has_stack in origins_info if has_stack),
+            [name for name, _ in origins_info],
         )
         if origin is None:
             continue
