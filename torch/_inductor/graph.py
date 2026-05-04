@@ -1825,6 +1825,25 @@ class GraphLowering(torch.fx.Interpreter):
                 for o in origins
             ),
         )
+        # Log the derived name->fqn mapping for every origin that has a stack.
+        # This is the mapping we will use to replace the current downstream
+        # outermost-prefix filter approach.
+        _fqn_mapping = {}
+        for _o in origins:
+            _stack = _o.meta.get("nn_module_stack")
+            if _stack:
+                _raw = list(_stack.values())[-1][0]
+                _cleaned = re.sub(r"^L\['self'\]\.?", "", _raw)
+                _parts = re.findall(r"\['([^']+)'\]", _cleaned)
+                _suffix = ".".join(_parts) if _parts else _cleaned
+                _innermost = f"L.{_suffix}" if _suffix else "L"
+                _fqn_mapping[_o.name] = f"{_innermost}.{re.sub(r'_[0-9]+$', '', _o.name)}"
+        if _fqn_mapping:
+            log.debug(
+                "[fqn_trace] run_node: n=%s derived_fqn_map=%s",
+                n.name,
+                _fqn_mapping,
+            )
         with (
             ir.IRNode.current_origins(origins),
             ir.IRNode.current_primary_node(n),
