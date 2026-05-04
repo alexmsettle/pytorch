@@ -135,6 +135,11 @@ def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
     history to filter out.  One FQN lookup per snode is sufficient.
     """
     fqn_map: dict[str, str] = getattr(V.graph, "fx_fqn_map", {})
+    log.debug(
+        "[fqn_trace] get_fused_kernel_module_fqn: fqn_map size=%d snodes=%d",
+        len(fqn_map),
+        len(scheduler_nodes),
+    )
 
     module_names: OrderedSet[str] = OrderedSet()
     for snode in scheduler_nodes:
@@ -144,7 +149,7 @@ def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
         origin = snode.node.get_origin_node()
         if origin is None:
             log.debug(
-                "[fqn_trace] snode=%s buf_name=%s skipped (no origin_node)",
+                "[fqn_trace] snode=%s buf_name=%s skipped (origin_node=None)",
                 snode,
                 buf_name,
             )
@@ -152,19 +157,21 @@ def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
         fqn = fqn_map.get(origin.name)
         if fqn:
             log.debug(
-                "[fqn_trace] snode=%s buf_name=%s origin_node=%s fqn=%s",
+                "[fqn_trace] snode=%s buf_name=%s origin_node=%s op=%s fqn=%s",
                 snode,
                 buf_name,
                 origin.name,
+                origin.op,
                 fqn,
             )
             module_names.add(fqn)
         else:
             log.debug(
-                "[fqn_trace] snode=%s buf_name=%s origin_node=%s skipped (not in fqn_map)",
+                "[fqn_trace] snode=%s buf_name=%s origin_node=%s op=%s skipped (not in fqn_map)",
                 snode,
                 buf_name,
                 origin.name,
+                origin.op,
             )
 
     result = " + ".join(module_names) if module_names else None
