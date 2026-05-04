@@ -3767,6 +3767,11 @@ class SubgraphTracer(fx.Tracer):
         nn_module_stack = tx.nn_module_stack
         if nn_module_stack:
             rv.node.meta["nn_module_stack"] = nn_module_stack.copy()
+            log.debug(
+                "[fqn_trace] nn_module_stack assigned: node=%s stack=%s",
+                rv.node.name,
+                {k: v for k, v in nn_module_stack.items()},
+            )
 
         if kind in {"call_function", "call_method"}:
             stack = (rv.node.name, target)
@@ -3811,6 +3816,11 @@ class SubgraphTracer(fx.Tracer):
                 nn_module_stack = tx.nn_module_stack
                 if nn_module_stack:
                     rv.node.meta["nn_module_stack"] = nn_module_stack.copy()
+                    log.debug(
+                        "[fqn_trace] nn_module_stack assigned (retracing path): node=%s stack=%s",
+                        rv.node.name,
+                        {k: v for k, v in nn_module_stack.items()},
+                    )
 
             if "source_fn_stack" not in rv.node.meta:
                 if kind in {"call_function", "call_method"}:

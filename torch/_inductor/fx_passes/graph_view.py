@@ -170,13 +170,15 @@ def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
                 log.debug(
                     "[fqn_trace] snode=%s buf_name=%s origin_node=%s "
                     "buf_matches_origin=%s%s "
-                    "has_nn_module_stack=True outermost_prefix=%s origins_names=%s",
+                    "has_nn_module_stack=True outermost_prefix=%s "
+                    "nn_module_stack=%s origins_names=%s",
                     snode,
                     buf_name,
                     origin_name,
                     name_match,
                     "" if name_match else f" (counter-named: buf_name={buf_name!r} != origin={origin_name!r})",
                     prefix,
+                    {k: v for k, v in stack.items()},
                     origins_names,
                 )
                 if prefix:
@@ -191,12 +193,14 @@ def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
                 fallback_name = fx_node.name
                 log.debug(
                     "[fqn_trace] snode=%s buf_name=%s origin_node=%s "
-                    "has_nn_module_stack=False fallback_origin=%s outermost_prefix=%s origins_names=%s",
+                    "has_nn_module_stack=False fallback_origin=%s outermost_prefix=%s "
+                    "nn_module_stack=%s origins_names=%s",
                     snode,
                     buf_name,
                     origin_name,
                     fallback_name,
                     prefix,
+                    {k: v for k, v in stack.items()},
                     origins_names,
                 )
                 if prefix:
