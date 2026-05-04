@@ -434,6 +434,10 @@ class GraphLowering(torch.fx.Interpreter):
 
         self.buffers: list[ir.Buffer] = []
         self.operations: list[ir.Operation] = []
+        # Maps FX node name -> fully-qualified module FQN string, e.g.
+        # "convolution_1" -> "L.networks.1.conv.convolution".
+        # Populated during run_node for every FX node that has nn_module_stack.
+        self.fx_fqn_map: dict[str, str] = {}
         self.const_output_index: dict[str, int] = (
             const_output_index if const_output_index else {}
         )
@@ -1825,24 +1829,23 @@ class GraphLowering(torch.fx.Interpreter):
                 for o in origins
             ),
         )
-        # Log the derived name->fqn mapping for every origin that has a stack.
-        # This is the mapping we will use to replace the current downstream
-        # outermost-prefix filter approach.
-        _fqn_mapping = {}
-        for _o in origins:
-            _stack = _o.meta.get("nn_module_stack")
-            if _stack:
-                _raw = list(_stack.values())[-1][0]
-                _cleaned = re.sub(r"^L\['self'\]\.?", "", _raw)
-                _parts = re.findall(r"\['([^']+)'\]", _cleaned)
-                _suffix = ".".join(_parts) if _parts else _cleaned
-                _innermost = f"L.{_suffix}" if _suffix else "L"
-                _fqn_mapping[_o.name] = f"{_innermost}.{re.sub(r'_[0-9]+$', '', _o.name)}"
-        if _fqn_mapping:
+        # Populate fx_fqn_map for n itself if it has nn_module_stack.
+        # Every FX node is processed by run_node exactly once, so iterating
+        # over n (not the accumulated origins) gives us a complete map by the
+        # time lowering finishes.
+        _stack = n.meta.get("nn_module_stack")
+        if _stack:
+            _raw = list(_stack.values())[-1][0]
+            _cleaned = re.sub(r"^L\['self'\]\.?", "", _raw)
+            _parts = re.findall(r"\['([^']+)'\]", _cleaned)
+            _suffix = ".".join(_parts) if _parts else _cleaned
+            _innermost = f"L.{_suffix}" if _suffix else "L"
+            self.fx_fqn_map[n.name] = f"{_innermost}.{re.sub(r'_[0-9]+$', '', n.name)}"
             log.debug(
-                "[fqn_trace] run_node: n=%s derived_fqn_map=%s",
+                "[fqn_trace] run_node: n=%s fx_fqn_map entry: %s -> %s",
                 n.name,
-                _fqn_mapping,
+                n.name,
+                self.fx_fqn_map[n.name],
             )
         with (
             ir.IRNode.current_origins(origins),
