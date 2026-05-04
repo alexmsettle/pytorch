@@ -3679,6 +3679,15 @@ class Scheduler:
 
         for node in self.nodes:
             log.debug("scheduling %s", node.node)
+            if node.node is not None:
+                log.debug(
+                    "[fqn_trace] scheduling %s origins_stacks=[%s]",
+                    getattr(node.node, "name", node),
+                    ", ".join(
+                        f"{o.name}:{list(o.meta['nn_module_stack'].values()) if o.meta.get('nn_module_stack') else 'no_stack'}"
+                        for o in node.node.origins
+                    ),
+                )
 
             if has_non_input_unbacked_defs:
                 assert node.node is not None
