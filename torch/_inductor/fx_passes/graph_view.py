@@ -125,49 +125,40 @@ def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
     """
     Return a human-readable FQN annotation for a fused kernel.
 
-    For each scheduler node, prefers origin_node (the single primary FX node
-    assigned by assign_origin_node during lowering) over the full origins set.
-    The full origins set accumulates transitively via gather_origins — when
-    lowering op B that consumes unrealized output of op A, gather_origins
-    propagates A's origins into B's origins set, causing cascading annotations
-    across layer boundaries.  origin_node is the direct FX node for each IR
-    node and does not inherit upstream origins.
+    Uses origin_node on each scheduler node's IRNode.  origin_node is the
+    single FX node that was being lowered when the IR buffer was created,
+    set via IRNode._current_primary_node in graph.py:run_node.  Unlike the
+    full origins set (which accumulates transitively via gather_origins),
+    origin_node does not inherit upstream history and stays specific to the
+    FX op that produced each buffer.
 
-    Falls back to the full origins set for nodes where origin_node is not set.
+    StorageBox.realize() propagates origin_node from the inner Pointwise to
+    the new ComputedBuffer, so inline realization during a different op's
+    run_node does not corrupt the tag.
 
     Builds names of the form '<module_path>.<op_name>' using the innermost
     nn_module_stack entry and the FX node name (stripped of its _N suffix).
     Joins distinct names with " + ". Returns None if no nn_module_stack
     metadata is present.
     """
-    # For each snode, use direct_origins — the snapshot of _current_origins taken
-    # at IR node creation time, before gather_origins appends transitive upstream
-    # history.  This gives exactly the FX nodes being lowered into this buffer,
-    # with no cascading from earlier ops in chained graphs.
-    #
-    # Falls back to origin_node (set by assign_origin_node) for nodes where
-    # direct_origins is empty (e.g. extern kernels lowered outside the normal
-    # current_origins context).
     module_names: OrderedSet[str] = OrderedSet()
     for snode in scheduler_nodes:
         if snode.node is None:
             log.debug("[fqn_trace] get_fused_kernel_module_fqn: snode.node is None for %s", snode)
             continue
-        direct = snode.node.get_direct_origins()
-        if not direct:
-            origin = snode.node.get_origin_node()
-            direct = OrderedSet([origin]) if origin is not None else OrderedSet()
+        origin = snode.node.get_origin_node()
         log.debug(
-            "[fqn_trace] get_fused_kernel_module_fqn: snode=%s direct_origins=%s",
+            "[fqn_trace] get_fused_kernel_module_fqn: snode=%s origin_node=%s",
             snode,
-            direct,
+            origin,
         )
-        for fx_node in direct:
-            stack = fx_node.meta.get("nn_module_stack")
-            if stack:
-                module_path = _clean_stack_name(next(reversed(stack.values()))[0])
-                if module_path:
-                    module_names.add(f"{module_path}.{_strip_instance_suffix(fx_node.name)}")
+        if origin is None:
+            continue
+        stack = origin.meta.get("nn_module_stack")
+        if stack:
+            module_path = _clean_stack_name(next(reversed(stack.values()))[0])
+            if module_path:
+                module_names.add(f"{module_path}.{_strip_instance_suffix(origin.name)}")
     result = " + ".join(module_names) if module_names else None
     log.debug("[fqn_trace] get_fused_kernel_module_fqn: result=%s", result)
     return result

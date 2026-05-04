@@ -556,14 +556,10 @@ class IRNode:
 
     _current_origins: ClassVar[OrderedSet[Any]] = OrderedSet()
     _current_stream_idx: ClassVar[int | None] = None
+    _current_primary_node: ClassVar[torch.fx.Node | None] = None
 
     # NB: These are kinda weird,
     origins: OrderedSet[Any] = dataclasses.field(init=False)
-    # Snapshot of _current_origins at node creation time — the FX nodes being
-    # actively lowered when this IR node was created.  Unlike `origins`, this is
-    # never extended by gather_origins, so it contains only the direct provenance
-    # without transitive upstream history.
-    direct_origins: OrderedSet[Any] = dataclasses.field(init=False)
     # traces back to where the IRNode is created in Inductor
     traceback: list[str] | None = dataclasses.field(init=False)
     origin_node: torch.fx.Node | None = dataclasses.field(init=False)
@@ -595,6 +591,18 @@ class IRNode:
             IRNode._current_stream_idx = old
 
     @staticmethod
+    @contextlib.contextmanager
+    def current_primary_node(
+        node: torch.fx.Node | None,
+    ) -> Generator[None, None, None]:
+        old = IRNode._current_primary_node
+        IRNode._current_primary_node = node
+        try:
+            yield
+        finally:
+            IRNode._current_primary_node = old
+
+    @staticmethod
     def is_realized_node(node: IRNode) -> bool:
         return isinstance(
             node,
@@ -619,11 +627,10 @@ class IRNode:
     def __post_init__(self) -> None:
         origins = OrderedSet(self._current_origins)
         self._post_init_setattr("origins", origins)
-        self._post_init_setattr("direct_origins", OrderedSet(self._current_origins))
         self._post_init_setattr(
             "traceback", traceback.format_stack() if config.debug_ir_traceback else None
         )
-        self._post_init_setattr("origin_node", None)
+        self._post_init_setattr("origin_node", self._current_primary_node)
         # Annotations dict for storing metadata (e.g., KernelTemplateChoice)
         self._post_init_setattr("annotations", {})
         self._post_init_setattr("stream_idx", self._current_stream_idx)
@@ -636,9 +643,6 @@ class IRNode:
 
     def get_origin_node(self) -> torch.fx.Node | None:
         return self.origin_node
-
-    def get_direct_origins(self) -> OrderedSet[Any]:
-        return self.direct_origins
 
     def get_defining_op(self) -> Operation | None:
         return None
