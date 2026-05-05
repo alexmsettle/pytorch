@@ -191,31 +191,41 @@ def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
                 anchor_prefixes.add(prefix)
             continue
 
-        # origin_node absent or not in fqn_map (e.g. placeholder) —
-        # fall back to the first origin in fqn_map to identify the block.
+        # origin_node absent or not in fqn_map.
+        # For placeholders: scan FX consumers (users) — they identify which
+        # block uses this parameter, not the upstream producers in origins.
+        # For None origin_node: fall back to scanning origins.
+        if origin is not None and origin.op == "placeholder":
+            fallback_source = origin.users
+            fallback_kind = "user"
+        else:
+            fallback_source = snode.node.origins
+            fallback_kind = "origin"
         log.debug(
             "[fqn_trace] pass1 snode=%s buf_name=%s origin_node=%s op=%s "
-            "not in fqn_map — scanning origins for fallback anchor",
+            "not in fqn_map — scanning %ss for fallback anchor",
             snode, buf_name, origin_name,
             origin.op if origin is not None else "None",
+            fallback_kind,
         )
-        for fx_node in snode.node.origins:
+        for fx_node in fallback_source:
             fallback_fqn = fqn_map.get(fx_node.name)
             if fallback_fqn:
                 stack = fx_node.meta.get("nn_module_stack")
                 prefix = _outermost_prefix(stack) if stack else None
                 log.debug(
-                    "[fqn_trace] pass1 snode=%s buf_name=%s fallback_origin=%s op=%s "
+                    "[fqn_trace] pass1 snode=%s buf_name=%s fallback_%s=%s op=%s "
                     "fallback_fqn=%s outermost_prefix=%s",
-                    snode, buf_name, fx_node.name, fx_node.op, fallback_fqn, prefix,
+                    snode, buf_name, fallback_kind, fx_node.name, fx_node.op,
+                    fallback_fqn, prefix,
                 )
                 if prefix:
                     anchor_prefixes.add(prefix)
                 break
         else:
             log.debug(
-                "[fqn_trace] pass1 snode=%s buf_name=%s no anchor found in origins",
-                snode, buf_name,
+                "[fqn_trace] pass1 snode=%s buf_name=%s no anchor found in %ss",
+                snode, buf_name, fallback_kind,
             )
 
     log.debug("[fqn_trace] pass1 complete: anchor_prefixes=%s", list(anchor_prefixes))
