@@ -15,18 +15,27 @@ The FQN flows from FX graph metadata all the way to the generated Python wrapper
 
 ### Stage 1 — FQN extraction (`graph_view.py:get_fused_kernel_module_fqn`)
 
-Two-pass algorithm to avoid including cascaded upstream history:
+Hybrid two-pass algorithm combining `origin_node` (non-accumulated) for block identity with `origins` (accumulated) for completeness, filtered via `fx_fqn_map`.
 
-**Pass 1 — anchor prefixes:** From each snode's `origin_node`, extract the outermost (first) `nn_module_stack` path (e.g. `L.networks.1`) — this is the network-block-level prefix that identifies which block(s) the fused kernel belongs to. For snodes whose `origin_node` is a placeholder (no `nn_module_stack`), fall back to the first `origins` entry that has a stack.
+**`fx_fqn_map`** — built once during lowering in `graph.py:run_node`. Maps each FX node name to its full FQN string: `"convolution_1" → "L.networks.1.conv.convolution"`. Uses `_clean_stack_name` on the innermost `nn_module_stack` entry + `_strip_instance_suffix` on `n.name`.
 
-**Pass 2 — filter origins:** Walk all `origins` across all snodes. Include only FX nodes whose outermost `nn_module_stack` path is in the anchor set. Build names as `{innermost_module_path}.{stripped_aten_op_name}` — e.g. `L.networks.3.conv.convolution`, `L.networks.3.mul`. The module path makes the FX instance-number suffix redundant (no need for `convolution_3`); the `_N` suffix would only be needed if the same ATen op appeared more than once under the identical module path. Unique names joined with `" + "`.
+**Pass 1 — anchor prefixes via `origin_node`:** For each snode, `origin_node` is the direct FX node whose `run_node` call created the IR buffer — never transitively accumulated. Look it up in `fqn_map` to get the anchor FQN, then read its `nn_module_stack` outermost entry (`_outermost_prefix`) to get the block-level prefix (e.g. `L.networks.3`). Snodes with `origin_node=None` or not in `fqn_map` are logged and skipped.
 
-Key: `origins` for fused kernels accumulates ALL upstream FX nodes transitively. The outermost-prefix filter isolates the current block's ops and discards history from previous blocks.
+**Pass 2 — collect FQNs from `origins` with prefix filter:** Walk all `origins` across every snode. `origins` is transitively accumulated (cascading history from upstream blocks), but each entry is looked up in `fqn_map` and filtered by `fqn.startswith(anchor_prefix + ".")`. This captures inline ops (relu, add inlined into a parent buffer — never their own snodes) while rejecting cascaded upstream history.
+
+Key: `origin_node` gives unambiguous block identity (no cascading). `origins` walk then collects ALL ops in that block, including inlined ones absent from `scheduler_nodes`.
 
 Log lines:
 ```
-[fqn_trace] get_fused_kernel_module_fqn: snode=<name> origin_node=<fx_node>
-[fqn_trace] get_fused_kernel_module_fqn: result=<fqn>   # None if no stack found
+[fqn_trace] get_fused_kernel_module_fqn entry: fqn_map size=<N> snodes=<N>
+[fqn_trace] pass1 snode=<s> buf_name=<b> origin_node=<n> op=<op> anchor_fqn=<fqn> outermost_prefix=<p>
+[fqn_trace] pass1 snode=<s> buf_name=<b> skipped (origin_node=None)
+[fqn_trace] pass1 snode=<s> buf_name=<b> origin_node=<n> op=<op> skipped (origin not in fqn_map)
+[fqn_trace] pass1 complete: anchor_prefixes=[...]
+[fqn_trace] pass2 snode=<s> buf_name=<b> fx_node=<n> fqn=<fqn> included
+[fqn_trace] pass2 snode=<s> buf_name=<b> fx_node=<n> fqn=<fqn> excluded (prefix not in anchors=[...])
+[fqn_trace] pass2 snode=<s> buf_name=<b> fx_node=<n> op=<op> skipped (not in fqn_map)
+[fqn_trace] get_fused_kernel_module_fqn: result=<fqn>   # None if no anchors found
 ```
 
 ### Stage 2a — Triton kernel annotation (`wrapper.py:generate_kernel_call`)

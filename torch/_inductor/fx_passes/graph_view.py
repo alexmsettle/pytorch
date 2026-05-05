@@ -122,26 +122,47 @@ def _strip_instance_suffix(name: str) -> str:
     return re.sub(r"_\d+$", "", name)
 
 
+def _outermost_prefix(stack: Any) -> str:
+    """Return the cleaned outermost (block-level) module path from an nn_module_stack."""
+    return _clean_stack_name(next(iter(stack.values()))[0])
+
+
 def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
     """
     Return a human-readable FQN annotation for a fused kernel.
 
-    Uses V.graph.fx_fqn_map — built during lowering in graph.py:run_node —
-    to map each snode's origin_node directly to its FQN string, e.g.
+    Uses V.graph.fx_fqn_map — built once during lowering in graph.py:run_node —
+    to map FX node names to FQN strings, e.g.
     "convolution_1" -> "L.networks.1.conv.convolution".
 
-    origin_node is the direct FX node whose run_node call created the IR
-    buffer — it is never transitively accumulated, so there is no cascading
-    history to filter out.  One FQN lookup per snode is sufficient.
+    Two-pass hybrid algorithm:
+
+    Pass 1 — anchor prefixes via origin_node:
+        For each snode, origin_node is the direct FX node whose run_node
+        call created the IR buffer.  It is never transitively accumulated,
+        so it gives an unambiguous block identity.  Look it up in fqn_map
+        to get the anchor FQN, then read its nn_module_stack outermost
+        entry to get the block-level prefix (e.g. "L.networks.3").
+
+    Pass 2 — collect FQNs from origins with prefix filter:
+        Walk all origins across every snode.  origins is transitively
+        accumulated (cascading history from upstream blocks), but each
+        entry is looked up in fqn_map and filtered by the anchor prefix.
+        This correctly captures inline ops (relu, add) that share the
+        same block but were inlined into a parent buffer and never became
+        their own snodes, while excluding cascaded history from upstream
+        blocks.
     """
     fqn_map: dict[str, str] = getattr(V.graph, "fx_fqn_map", {})
     log.debug(
-        "[fqn_trace] get_fused_kernel_module_fqn: fqn_map size=%d snodes=%d",
+        "[fqn_trace] get_fused_kernel_module_fqn entry: fqn_map size=%d snodes=%d",
         len(fqn_map),
         len(scheduler_nodes),
     )
 
-    module_names: OrderedSet[str] = OrderedSet()
+    # Pass 1: derive block anchor prefixes from each snode's origin_node.
+    # origin_node is direct (not accumulated), giving clean block identity.
+    anchor_prefixes: OrderedSet[str] = OrderedSet()
     for snode in scheduler_nodes:
         if snode.node is None:
             continue
@@ -149,30 +170,65 @@ def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
         origin = snode.node.get_origin_node()
         if origin is None:
             log.debug(
-                "[fqn_trace] snode=%s buf_name=%s skipped (origin_node=None)",
+                "[fqn_trace] pass1 snode=%s buf_name=%s skipped (origin_node=None)",
                 snode,
                 buf_name,
             )
             continue
-        fqn = fqn_map.get(origin.name)
-        if fqn:
+        anchor_fqn = fqn_map.get(origin.name)
+        if not anchor_fqn:
             log.debug(
-                "[fqn_trace] snode=%s buf_name=%s origin_node=%s op=%s fqn=%s",
-                snode,
-                buf_name,
-                origin.name,
-                origin.op,
-                fqn,
+                "[fqn_trace] pass1 snode=%s buf_name=%s origin_node=%s op=%s "
+                "skipped (origin not in fqn_map)",
+                snode, buf_name, origin.name, origin.op,
+            )
+            continue
+        stack = origin.meta.get("nn_module_stack")
+        prefix = _outermost_prefix(stack) if stack else None
+        log.debug(
+            "[fqn_trace] pass1 snode=%s buf_name=%s origin_node=%s op=%s "
+            "anchor_fqn=%s outermost_prefix=%s",
+            snode, buf_name, origin.name, origin.op, anchor_fqn, prefix,
+        )
+        if prefix:
+            anchor_prefixes.add(prefix)
+
+    log.debug("[fqn_trace] pass1 complete: anchor_prefixes=%s", list(anchor_prefixes))
+
+    if not anchor_prefixes:
+        log.debug("[fqn_trace] get_fused_kernel_module_fqn: result=None (no anchors)")
+        return None
+
+    # Pass 2: walk all origins across every snode (the transitively accumulated
+    # set), look each up in fqn_map, and include only those whose FQN prefix
+    # matches an anchor.  This captures inline ops (e.g. relu, add inlined into
+    # a parent buffer) while rejecting cascaded history from upstream blocks.
+    module_names: OrderedSet[str] = OrderedSet()
+    for snode in scheduler_nodes:
+        if snode.node is None:
+            continue
+        buf_name = getattr(snode.node, "name", None)
+        for fx_node in snode.node.origins:
+            fqn = fqn_map.get(fx_node.name)
+            if not fqn:
+                log.debug(
+                    "[fqn_trace] pass2 snode=%s buf_name=%s fx_node=%s op=%s "
+                    "skipped (not in fqn_map)",
+                    snode, buf_name, fx_node.name, fx_node.op,
+                )
+                continue
+            if not any(fqn == p or fqn.startswith(p + ".") for p in anchor_prefixes):
+                log.debug(
+                    "[fqn_trace] pass2 snode=%s buf_name=%s fx_node=%s "
+                    "fqn=%s excluded (prefix not in anchors=%s)",
+                    snode, buf_name, fx_node.name, fqn, list(anchor_prefixes),
+                )
+                continue
+            log.debug(
+                "[fqn_trace] pass2 snode=%s buf_name=%s fx_node=%s fqn=%s included",
+                snode, buf_name, fx_node.name, fqn,
             )
             module_names.add(fqn)
-        else:
-            log.debug(
-                "[fqn_trace] snode=%s buf_name=%s origin_node=%s op=%s skipped (not in fqn_map)",
-                snode,
-                buf_name,
-                origin.name,
-                origin.op,
-            )
 
     result = " + ".join(module_names) if module_names else None
     log.debug("[fqn_trace] get_fused_kernel_module_fqn: result=%s", result)
