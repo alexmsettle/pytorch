@@ -162,36 +162,55 @@ def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
 
     # Pass 1: derive block anchor prefixes from each snode's origin_node.
     # origin_node is direct (not accumulated), giving clean block identity.
+    # Fallback: when origin_node is absent or a placeholder (not in fqn_map),
+    # walk origins to find the first non-placeholder op in fqn_map.
     anchor_prefixes: OrderedSet[str] = OrderedSet()
     for snode in scheduler_nodes:
         if snode.node is None:
             continue
         buf_name = getattr(snode.node, "name", None)
         origin = snode.node.get_origin_node()
-        if origin is None:
-            log.debug(
-                "[fqn_trace] pass1 snode=%s buf_name=%s skipped (origin_node=None)",
-                snode,
-                buf_name,
-            )
-            continue
-        anchor_fqn = fqn_map.get(origin.name)
-        if not anchor_fqn:
+        origin_name = origin.name if origin is not None else None
+        anchor_fqn = fqn_map.get(origin_name) if origin_name else None
+
+        if anchor_fqn:
+            stack = origin.meta.get("nn_module_stack")
+            prefix = _outermost_prefix(stack) if stack else None
             log.debug(
                 "[fqn_trace] pass1 snode=%s buf_name=%s origin_node=%s op=%s "
-                "skipped (origin not in fqn_map)",
-                snode, buf_name, origin.name, origin.op,
+                "anchor_fqn=%s outermost_prefix=%s",
+                snode, buf_name, origin_name, origin.op, anchor_fqn, prefix,
             )
+            if prefix:
+                anchor_prefixes.add(prefix)
             continue
-        stack = origin.meta.get("nn_module_stack")
-        prefix = _outermost_prefix(stack) if stack else None
+
+        # origin_node absent or not in fqn_map (e.g. placeholder) —
+        # fall back to the first origin in fqn_map to identify the block.
         log.debug(
             "[fqn_trace] pass1 snode=%s buf_name=%s origin_node=%s op=%s "
-            "anchor_fqn=%s outermost_prefix=%s",
-            snode, buf_name, origin.name, origin.op, anchor_fqn, prefix,
+            "not in fqn_map — scanning origins for fallback anchor",
+            snode, buf_name, origin_name,
+            origin.op if origin is not None else "None",
         )
-        if prefix:
-            anchor_prefixes.add(prefix)
+        for fx_node in snode.node.origins:
+            fallback_fqn = fqn_map.get(fx_node.name)
+            if fallback_fqn:
+                stack = fx_node.meta.get("nn_module_stack")
+                prefix = _outermost_prefix(stack) if stack else None
+                log.debug(
+                    "[fqn_trace] pass1 snode=%s buf_name=%s fallback_origin=%s op=%s "
+                    "fallback_fqn=%s outermost_prefix=%s",
+                    snode, buf_name, fx_node.name, fx_node.op, fallback_fqn, prefix,
+                )
+                if prefix:
+                    anchor_prefixes.add(prefix)
+                break
+        else:
+            log.debug(
+                "[fqn_trace] pass1 snode=%s buf_name=%s no anchor found in origins",
+                snode, buf_name,
+            )
 
     log.debug("[fqn_trace] pass1 complete: anchor_prefixes=%s", list(anchor_prefixes))
 
