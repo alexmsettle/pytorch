@@ -172,6 +172,12 @@ def get_fused_kernel_module_fqn(scheduler_nodes: Any) -> str | None:
         origin = snode.node.get_origin_node()
         origin_name = origin.name if origin is not None else None
         anchor_fqn = fqn_map.get(origin_name) if origin_name else None
+        log.debug(
+            "[fqn_trace] pass1 snode=%s buf_name=%s origin_node=%s op=%s in_fqn_map=%s",
+            snode, buf_name, origin_name,
+            origin.op if origin is not None else "None",
+            anchor_fqn is not None,
+        )
 
         if anchor_fqn:
             stack = origin.meta.get("nn_module_stack")
