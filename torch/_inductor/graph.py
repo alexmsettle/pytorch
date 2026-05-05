@@ -439,6 +439,10 @@ class GraphLowering(torch.fx.Interpreter):
         # "convolution_1" -> "L.networks.1.conv.convolution".
         # Populated during run_node for every FX node that has nn_module_stack.
         self.fx_fqn_map: dict[str, str] = {}
+        # FQN strings claimed by ExternKernelSchedulerNodes (e.g. convolution).
+        # Populated during codegen so Pass 2 of get_fused_kernel_module_fqn
+        # skips ops already annotated by their own extern kernel wrapper.
+        self.fx_extern_fqns: set[str] = set()
         self.const_output_index: dict[str, int] = (
             const_output_index if const_output_index else {}
         )

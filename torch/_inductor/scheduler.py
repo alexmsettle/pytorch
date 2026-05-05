@@ -1549,6 +1549,8 @@ class ExternKernelSchedulerNode(BaseSchedulerNode):
                 # or placeholders (no nn_module_stack), this produces a clean
                 # single-FQN result without cascading upstream names.
                 module_fqn = get_fused_kernel_module_fqn([self])
+            if module_fqn and hasattr(V.graph, "fx_extern_fqns"):
+                V.graph.fx_extern_fqns.add(module_fqn)
             log.debug(
                 "[fqn_trace] ExternKernelSchedulerNode.codegen: module_fqn=%s for %s",
                 module_fqn,
