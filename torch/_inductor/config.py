@@ -1758,6 +1758,19 @@ class triton:
     # into nsys SQLite output via torch.cuda._annotate_cuda_graph_trace.inject_nvtx_ranges_into_nsys_sqlite.
     cudagraph_kernel_annotations: bool = False
 
+    # When cudagraph_kernel_annotations is enabled, the generated wrapper bakes
+    # each module FQN as a literal string. Because FxGraphCache keys on the FX
+    # graph hash (which does not include call-site identity), structurally
+    # identical pieces — e.g. transformer layers 2..30 in a Llama-style model —
+    # share a single cached wrapper carrying one baked FQN, collapsing per-layer
+    # attribution. Set this flag to bypass FxGraphCache so every piece compiles
+    # fresh with its own nn_module_stack-derived FQN. Has no effect unless
+    # cudagraph_kernel_annotations is also True. Cost is paid up-front at
+    # warmup (one extra wrapper-codegen per unique call site; Triton kernel
+    # binaries are still deduplicated by Triton's own source-hash cache). No
+    # runtime cost — CUDA graphs replay unchanged.
+    force_disable_cache_for_kernel_annotations: bool = False
+
     # Always load full blocks (rather than broadcasting inside the block)
     dense_indexing = False
 

@@ -1695,6 +1695,22 @@ class FxGraphCache(GuardedCache[CompiledFxGraph]):
         Check some conditions that would preclude caching and raise BypassFxGraphCache
         to bypass in case caching is not possible.
         """
+        # When triton.cudagraph_kernel_annotations is on, the wrapper code bakes
+        # the call-site FQN as a literal string. Sharing one cached wrapper across
+        # structurally-identical-but-distinct call sites (e.g. transformer layers)
+        # collapses per-layer attribution. The companion knob below opts out of
+        # FxGraphCache so every piece compiles fresh with its own FQN.
+        if (
+            config.triton.cudagraph_kernel_annotations
+            and config.triton.force_disable_cache_for_kernel_annotations
+        ):
+            raise BypassFxGraphCache(
+                "FxGraphCache disabled: "
+                "triton.cudagraph_kernel_annotations + "
+                "triton.force_disable_cache_for_kernel_annotations require "
+                "per-call-site recompilation for distinct FQN annotations"
+            )
+
         # Custom passes must implement the CustomGraphPass or we don't
         # know how to include them in the cache key calculation.
         # When timing is EARLY, pre-grad passes already ran before the cache
