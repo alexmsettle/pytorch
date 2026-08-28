@@ -924,12 +924,15 @@ def remap_to_exec_graph(torch_cuda_graph: torch.cuda.CUDAGraph) -> None:
         if torch_cuda_graph._remapped_exec_id is None
         else torch_cuda_graph._remapped_exec_id
     )
+    print(f"[fqn_debug] remap_to_exec_graph: current_key_id={current_key_id}, exec_graph_id={exec_graph_id}")
     if current_key_id == exec_graph_id:
+        print("[fqn_debug] remap_to_exec_graph: no-op (same exec id)")
         return
 
     remapped = _rekey_annotations(_kernel_annotations, current_key_id, exec_graph_id)
     _kernel_annotations.clear()
     _kernel_annotations.update(remapped)
+    print(f"[fqn_debug] remap_to_exec_graph: after remap, _kernel_annotations size={len(_kernel_annotations)}, remapped={len(remapped)}")
     torch_cuda_graph._remapped_exec_id = exec_graph_id
 
 
@@ -997,6 +1000,7 @@ def get_kernel_annotations() -> Mapping[int, list[Any]]:
         >>> with open("annotations.pkl", "wb") as f:
         ...     pickle.dump(dict(annotations), f)
     """
+    print(f"[fqn_debug] get_kernel_annotations: returning {len(_kernel_annotations)} entries")
     return _kernel_annotations
 
 
@@ -1029,6 +1033,7 @@ def clear_kernel_annotations() -> None:
         This API is in prototype and may change in future releases.
     """
     global _annotation_generation
+    print(f"[fqn_debug] clear_kernel_annotations: clearing {len(_kernel_annotations)} entries")
     _kernel_annotations.clear()
     _pending_scopes.clear()
     _annotation_generation += 1
@@ -1041,8 +1046,10 @@ def remove_kernel_annotations(exec_graph_ids: Iterable[int]) -> None:
     ids = set(exec_graph_ids)
     if not ids:
         return
+    before = len(_kernel_annotations)
     for key in [k for k in _kernel_annotations if k >> 32 in ids]:
         del _kernel_annotations[key]
+    print(f"[fqn_debug] remove_kernel_annotations: exec_graph_ids={ids}, removed {before - len(_kernel_annotations)} entries, {len(_kernel_annotations)} remain")
 
 
 def register_fqn_annotation_hooks(
